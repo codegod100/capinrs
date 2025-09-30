@@ -1,0 +1,16 @@
+name = "capinrs-server"
+main = "worker/src/index.ts"
+compatibility_date = "2025-09-30"
+
+[[rules]]
+globs = ["**/*.wasm"]
+type = "CompiledWasm"
+
+[dev]
+port = 8787
+local_protocol = "http"
+
+# Fill these in before deploying
+# account_id = "your-account-id"
+# routes = ["example.com/*"]
+# workers_dev = true

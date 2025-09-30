@@ -1,0 +1,6 @@
+/target
+node_modules/
+worker/wasm/
+.wrangler/
+wasm/target/
+wasm/pkg/

@@ -1,0 +1,20 @@
+[package]
+name = "capinrs"
+version = "0.1.0"
+edition = "2024"
+default-run = "server"
+
+[dependencies]
+capnweb-server = "0.1.0"
+capnweb-client = "0.1.0"
+capnweb-core = "0.1.0"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
+
+[[bin]]
+name = "server"
+path = "src/main.rs"
+
+[[bin]]
+name = "client"
+path = "src/client.rs"
