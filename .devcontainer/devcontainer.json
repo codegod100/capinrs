@@ -1,0 +1,27 @@
+{
+    "image": "debian:latest",
+    "features": {
+        "ghcr.io/devcontainers/features/desktop-lite:1": {},
+        "ghcr.io/devcontainers/features/rust:1": {},
+        "ghcr.io/devcontainers/features/node:1": {},
+        "ghcr.io/devcontainers/features/sshd:1": {
+            "version": "latest"
+        }
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "openai.chatgpt"
+            ]
+        }
+    },
+    "forwardPorts": [
+        6080
+    ],
+    "portsAttributes": {
+        "6080": {
+            "label": "desktop"
+        }
+    },
+    "postCreateCommand": "apt update && apt install -y libxkbcommon-x11-0 && npm install -g pnpm && pnpm add -g tsx && apt install -y fish && usermod -s /usr/bin/fish vscode"
+}
