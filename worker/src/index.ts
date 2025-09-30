@@ -17,11 +17,11 @@ export default {
     if (request.method !== "POST") {
       return new Response(
         JSON.stringify({
-          error: "Send a POST request with JSON { method, args } to invoke the calculator.",
-          example: {
-            method: "add",
-            args: [2, 3],
-          },
+          error: "Send a POST request with Cap'n Web batch payload (text/plain).",
+          example: [
+            '[\"push\", [\"call\", 1, [\"add\"], [10, 20]]]',
+            '[\"pull\", 1]',
+          ].join("\n"),
         }),
         {
           status: 405,
@@ -45,17 +45,17 @@ export default {
     }
 
     try {
-  const resultJson = process_rpc(payload || "{}");
-      return new Response(resultJson, {
+      const responseBody = process_rpc(payload);
+      return new Response(responseBody, {
         status: 200,
         headers: {
-          "content-type": "application/json",
+          "content-type": "text/plain; charset=utf-8",
         },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return new Response(JSON.stringify({ error: `Execution failed: ${message}` }), {
-        status: 500,
+      return new Response(JSON.stringify({ error: message }), {
+        status: 400,
         headers: { "content-type": "application/json" },
       });
     }
