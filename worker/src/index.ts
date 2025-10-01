@@ -21,30 +21,87 @@ async function ensureWasm() {
   await wasmReady;
 }
 
-async function handleRpc(request: Request, state: DurableObjectStateWithStorage): Promise<Response> {
-  if (request.method === "GET") {
-    const [callCount, lastRequest, lastResponse] = await Promise.all([
-      state.storage.get<number>("callCount"),
-      state.storage.get<string>("lastRequest"),
-      state.storage.get<string>("lastResponse"),
-    ]);
+async function readDurableStats(state: DurableObjectStateWithStorage) {
+  const [callCount, lastRequest, lastResponse] = await Promise.all([
+    state.storage.get<number>("callCount"),
+    state.storage.get<string>("lastRequest"),
+    state.storage.get<string>("lastResponse"),
+  ]);
 
-    return new Response(
-      JSON.stringify({
-        callCount: callCount ?? 0,
-        lastRequest: lastRequest ?? null,
-        lastResponse: lastResponse ?? null,
-      }),
-      {
-        status: 200,
-        headers: {
-          "content-type": "application/json",
-        },
-      },
-    );
+  return {
+    callCount: callCount ?? 0,
+    lastRequest: lastRequest ?? null,
+    lastResponse: lastResponse ?? null,
+  };
+}
+
+async function tryHandleStatsBatch(payload: string, state: DurableObjectStateWithStorage): Promise<Response | null> {
+  const lines = payload
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (lines.length !== 2) {
+    return null;
   }
 
-  await ensureWasm();
+  let pushOp: unknown;
+  let pullOp: unknown;
+
+  try {
+    pushOp = JSON.parse(lines[0]);
+    pullOp = JSON.parse(lines[1]);
+  } catch {
+    return null;
+  }
+
+  if (!Array.isArray(pushOp) || pushOp[0] !== "push") {
+    return null;
+  }
+
+  const callOp = (pushOp as unknown[])[1];
+  if (!Array.isArray(callOp) || callOp[0] !== "call") {
+    return null;
+  }
+
+  const path = (callOp as unknown[])[2];
+  const method = Array.isArray(path) && typeof path[0] === "string" ? path[0] : null;
+  if (method !== "stats") {
+    return null;
+  }
+
+  if (!Array.isArray(pullOp) || pullOp[0] !== "pull") {
+    return null;
+  }
+
+  const importId = (pullOp as unknown[])[1];
+  if (typeof importId !== "number") {
+    return null;
+  }
+
+  const stats = await readDurableStats(state);
+  const responseLine = JSON.stringify(["result", importId, stats]);
+
+  return new Response(responseLine, {
+    status: 200,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "x-capnweb-call-count": String(stats.callCount),
+    },
+  });
+}
+
+async function handleRpc(request: Request, state: DurableObjectStateWithStorage): Promise<Response> {
+  if (request.method === "GET") {
+    const stats = await readDurableStats(state);
+
+    return new Response(JSON.stringify(stats), {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+      },
+    });
+  }
 
   if (request.method !== "POST") {
     return new Response(
@@ -75,6 +132,13 @@ async function handleRpc(request: Request, state: DurableObjectStateWithStorage)
       headers: { "content-type": "application/json" },
     });
   }
+
+  const statsResponse = await tryHandleStatsBatch(payload, state);
+  if (statsResponse) {
+    return statsResponse;
+  }
+
+  await ensureWasm();
 
   try {
     const responseBody = process_rpc(payload);

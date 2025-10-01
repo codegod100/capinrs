@@ -1,11 +1,11 @@
 use capnweb_client::{Client as CapnClient, ClientConfig};
 use capnweb_core::CapId;
-use reqwest::Client as HttpClient;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::env;
 
 const DEFAULT_CAPN_BACKEND: &str = "http://localhost:8080";
 const RPC_PATH: &str = "/rpc/batch";
+const CALCULATOR_CAP_ID: u64 = 1;
 
 struct ClientTarget {
     url: String,
@@ -94,42 +94,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let client = CapnClient::new(config)?;
     let result = client
-        .call(CapId::new(1), "add", vec![json!(10), json!(20)])
+        .call(CapId::new(CALCULATOR_CAP_ID), "add", vec![json!(10), json!(20)])
         .await?;
 
     println!("Result: {}", result);
 
     if target.fetch_stats {
-        let http = HttpClient::new();
-        match http
-            .get(&target.url)
-            .header("accept", "application/json")
-            .send()
-            .await
-        {
-            Ok(response) => {
-                let status = response.status();
-                if status.is_success() {
-                    match response.json::<Value>().await {
-                        Ok(stats) => {
-                            println!("Durable object stats:");
-                            let pretty = serde_json::to_string_pretty(&stats)
-                                .unwrap_or_else(|_| stats.to_string());
-                            println!("{}", pretty);
-                        }
-                        Err(error) => {
-                            eprintln!("Failed to parse stats JSON: {}", error);
-                        }
-                    }
-                } else {
-                    let body = response.text().await.unwrap_or_default();
-                    eprintln!("Stats request failed with status {}: {}", status, body);
-                }
-            }
-            Err(error) => {
-                eprintln!("Failed to fetch stats: {}", error);
-            }
-        }
+        let stats = client
+            .call(CapId::new(CALCULATOR_CAP_ID), "stats", Vec::new())
+            .await?;
+
+        println!("Durable object stats:");
+        let pretty = serde_json::to_string_pretty(&stats).unwrap_or_else(|_| stats.to_string());
+        println!("{}", pretty);
     }
     Ok(())
 }
