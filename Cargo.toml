@@ -10,6 +10,9 @@ capnweb-client = "0.1.0"
 capnweb-core = "0.1.0"
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync"] }
+tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
+futures-util = "0.3"
+serde = { version = "1.0", features = ["derive"] }
 
 [[bin]]
 name = "server"
@@ -18,3 +21,7 @@ path = "src/main.rs"
 [[bin]]
 name = "client"
 path = "src/client.rs"
+
+[[bin]]
+name = "websocket-client"
+path = "src/websocket_client_main.rs"
