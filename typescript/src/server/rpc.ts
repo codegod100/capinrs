@@ -1,12 +1,6 @@
-/// <reference path="./global.d.ts" />
-
+const CALCULATOR_CAP_ID = 1;
 const CHAT_CAPABILITY_ID = 2;
 const SESSION_CAPABILITY_START = 10_000;
-const CALCULATOR_CAP_ID = 1;
-
-interface Env {
-  CAPNWEB: DurableObjectNamespace;
-}
 
 type DurableObjectStateWithStorage = {
   storage: {
@@ -15,56 +9,12 @@ type DurableObjectStateWithStorage = {
   };
 };
 
-// TypeScript calculator implementation to replace WASM
-function handleCalculatorCall(payload: any, state: DurableObjectStateWithStorage): any {
-  const path = payload[2];
-  if (!Array.isArray(path)) {
-    throw new Error('call operation must include a method path array');
-  }
-
-  const method = path[0];
-  if (typeof method !== 'string') {
-    throw new Error('call method name must be a string');
-  }
-
-  const args = payload[3] || [];
-
-  switch (method) {
-    case 'add': {
-      if (args.length !== 2 || typeof args[0] !== 'number' || typeof args[1] !== 'number') {
-        throw new Error('`add` expects exactly two numeric arguments');
-      }
-      return args[0] + args[1];
-    }
-    case 'stats': {
-      // This is handled by tryHandleStatsBatch
-      throw new Error('stats should be handled by tryHandleStatsBatch');
-    }
-    default:
-      throw new Error(`unknown calculator method \`${method}\``);
-  }
-}
-
-async function readDurableStats(state: DurableObjectStateWithStorage) {
-  const [callCount, lastRequest, lastResponse] = await Promise.all([
-    state.storage.get<number>("callCount"),
-    state.storage.get<string>("lastRequest"),
-    state.storage.get<string>("lastResponse"),
-  ]);
-
-  return {
-    callCount: callCount ?? 0,
-    lastRequest: lastRequest ?? null,
-    lastResponse: lastResponse ?? null,
-  };
-}
-
-type ChatState = {
+interface ChatState {
   credentials: Record<string, string>;
   messages: Array<{ from: string; body: string; timestamp: number }>;
   nextSessionCapId: number;
   sessionCaps: Record<string, { username: string }>;
-};
+}
 
 const DEFAULT_CHAT_STATE: ChatState = {
   credentials: {
@@ -166,6 +116,20 @@ async function persistChatState(state: DurableObjectStateWithStorage, chatState:
   await state.storage.put("chatState", JSON.stringify(chatState));
 }
 
+async function readDurableStats(state: DurableObjectStateWithStorage) {
+  const [callCount, lastRequest, lastResponse] = await Promise.all([
+    state.storage.get<number>("callCount"),
+    state.storage.get<string>("lastRequest"),
+    state.storage.get<string>("lastResponse"),
+  ]);
+
+  return {
+    callCount: callCount ?? 0,
+    lastRequest: lastRequest ?? null,
+    lastResponse: lastResponse ?? null,
+  };
+}
+
 async function tryHandleStatsBatch(payload: string, state: DurableObjectStateWithStorage): Promise<Response | null> {
   const lines = payload
     .split("\n")
@@ -223,6 +187,7 @@ async function tryHandleStatsBatch(payload: string, state: DurableObjectStateWit
 }
 
 async function tryHandleChatBatch(payload: string, state: DurableObjectStateWithStorage): Promise<Response | null> {
+  console.log('tryHandleChatBatch called with payload:', payload);
   const lines = payload
     .split("\n")
     .map((line) => line.trim())
@@ -348,17 +313,37 @@ async function tryHandleChatBatch(payload: string, state: DurableObjectStateWith
     } else {
       switch (method) {
         case "sendMessage": {
+          console.log('sendMessage case reached with args:', args);
           if (args.length !== 1 || typeof args[0] !== "string") {
             payloadResult = { success: false, message: "`sendMessage` expects <message>" };
             break;
           }
           const message = args[0] as string;
-          chatState.messages.push({
+          console.log('Processing sendMessage with message:', message);
+          const newMessage = {
             from: sessionInfo.username,
             body: message,
             timestamp: Date.now(),
-          });
+          };
+          chatState.messages.push(newMessage);
           mutated = true;
+          
+          // Broadcast the message to all connected clients
+          try {
+            const server = (globalThis as any).serverInstance as any;
+            console.log('Server instance found:', !!server);
+            console.log('BroadcastMessage method exists:', !!server?.broadcastMessage);
+            if (server && server.broadcastMessage) {
+              console.log('Broadcasting message:', newMessage);
+              await server.broadcastMessage(newMessage);
+              console.log('Broadcast completed');
+            } else {
+              console.log('No server instance or broadcastMessage method available');
+            }
+          } catch (error) {
+            console.error('Failed to broadcast message:', error);
+          }
+          
           payloadResult = {
             success: true,
             value: {
@@ -428,61 +413,51 @@ async function tryHandleChatBatch(payload: string, state: DurableObjectStateWith
   });
 }
 
-async function handleRpc(request: Request, state: DurableObjectStateWithStorage): Promise<Response> {
-  if (request.method === "GET") {
-    const stats = await readDurableStats(state);
-
-    return new Response(JSON.stringify(stats), {
-      status: 200,
-      headers: {
-        "content-type": "application/json",
-      },
-    });
+function handleCalculatorCall(payload: any): any {
+  const path = payload[2];
+  if (!Array.isArray(path)) {
+    throw new Error('call operation must include a method path array');
   }
 
-  if (request.method !== "POST") {
-    return new Response(
-      JSON.stringify({
-        error: "Send a POST request with Cap'n Web batch payload (text/plain).",
-        example: [
-          '[\"push\", [\"call\", 1, [\"add\"], [10, 20]]]',
-          '[\"pull\", 1]',
-        ].join("\n"),
-      }),
-      {
-        status: 405,
-        headers: {
-          "content-type": "application/json",
-          allow: "POST",
-        },
-      },
-    );
+  const method = path[0];
+  if (typeof method !== 'string') {
+    throw new Error('call method name must be a string');
   }
 
-  let payload: string;
-  try {
-    payload = await request.text();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return new Response(JSON.stringify({ error: `Failed to read request body: ${message}` }), {
-      status: 400,
-      headers: { "content-type": "application/json" },
-    });
-  }
+  const args = payload[3] || [];
 
-  const statsResponse = await tryHandleStatsBatch(payload, state);
+  switch (method) {
+    case 'add': {
+      if (args.length !== 2 || typeof args[0] !== 'number' || typeof args[1] !== 'number') {
+        throw new Error('`add` expects exactly two numeric arguments');
+      }
+      return args[0] + args[1];
+    }
+    case 'stats': {
+      // This is handled by tryHandleStatsBatch
+      throw new Error('stats should be handled by tryHandleStatsBatch');
+    }
+    default:
+      throw new Error(`unknown calculator method \`${method}\``);
+  }
+}
+
+export async function processRpcBatch(input: string, state: DurableObjectStateWithStorage): Promise<string> {
+  // Try stats batch first
+  const statsResponse = await tryHandleStatsBatch(input, state);
   if (statsResponse) {
-    return statsResponse;
+    return await statsResponse.text();
   }
 
-  const chatResponse = await tryHandleChatBatch(payload, state);
+  // Try chat batch
+  const chatResponse = await tryHandleChatBatch(input, state);
   if (chatResponse) {
-    return chatResponse;
+    return await chatResponse.text();
   }
 
-  // Handle calculator operations with TypeScript instead of WASM
+  // Handle calculator operations
   try {
-    const lines = payload
+    const lines = input
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
@@ -494,23 +469,17 @@ async function handleRpc(request: Request, state: DurableObjectStateWithStorage)
       if (Array.isArray(pushOp) && pushOp[0] === "push" && Array.isArray(pullOp) && pullOp[0] === "pull") {
         const callOp = pushOp[1];
         if (Array.isArray(callOp) && callOp[0] === "call" && callOp[1] === CALCULATOR_CAP_ID) {
-          const result = handleCalculatorCall(callOp, state);
+          const result = handleCalculatorCall(callOp);
           const responseLine = JSON.stringify(["result", pullOp[1], result]);
 
           const nextCount = ((await state.storage.get<number>("callCount")) ?? 0) + 1;
           await Promise.all([
             state.storage.put("callCount", nextCount),
-            state.storage.put("lastRequest", payload),
+            state.storage.put("lastRequest", input),
             state.storage.put("lastResponse", responseLine),
           ]);
 
-          return new Response(responseLine, {
-            status: 200,
-            headers: {
-              "content-type": "text/plain; charset=utf-8",
-              "x-capnweb-call-count": nextCount.toString(),
-            },
-          });
+          return responseLine;
         }
       }
     }
@@ -518,25 +487,6 @@ async function handleRpc(request: Request, state: DurableObjectStateWithStorage)
     throw new Error("Unsupported operation");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return new Response(JSON.stringify({ error: message }), {
-      status: 400,
-      headers: { "content-type": "application/json" },
-    });
-  }
-}
-
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const id = env.CAPNWEB.idFromName("global");
-    const stub = env.CAPNWEB.get(id);
-    return stub.fetch(request);
-  },
-};
-
-export class CapnWebDurable {
-  constructor(private readonly state: DurableObjectStateWithStorage, private readonly env: Env) {}
-
-  async fetch(request: Request): Promise<Response> {
-    return handleRpc(request, this.state);
+    return JSON.stringify(['error', 0, { message }]);
   }
 }

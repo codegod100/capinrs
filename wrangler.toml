@@ -1,5 +1,5 @@
 name = "capinrs-server"
-main = "worker/src/index.ts"
+main = "typescript/src/server/index.ts"
 compatibility_date = "2025-09-30"
 
 [durable_objects]
@@ -11,9 +11,7 @@ bindings = [
 tag = "v1"
 new_sqlite_classes = ["CapnWebDurable"]
 
-[[rules]]
-globs = ["**/*.wasm"]
-type = "CompiledWasm"
+# Removed WASM rules since we're now using pure TypeScript
 
 [dev]
 port = 8787

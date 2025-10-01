@@ -4,3 +4,4 @@ worker/wasm/
 .wrangler/
 wasm/target/
 wasm/pkg/
+typescript/dist/

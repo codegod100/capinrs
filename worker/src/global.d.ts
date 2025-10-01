@@ -1,7 +1,4 @@
-declare module "*.wasm" {
-  const module: WebAssembly.Module;
-  export default module;
-}
+// Removed WASM module declaration since we're now using pure TypeScript
 
 interface DurableObjectId {}
 

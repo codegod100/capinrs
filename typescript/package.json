@@ -1,0 +1,34 @@
+{
+  "name": "capinrs-typescript",
+  "version": "1.0.0",
+  "description": "TypeScript Cloudflare Worker implementation of Cap'n Web server",
+  "type": "module",
+  "main": "dist/server/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "npx wrangler dev",
+    "dev:client": "node dist/client/index.js",
+    "deploy": "npx wrangler deploy",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20231218.0",
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0",
+    "wrangler": "^3.0.0"
+  },
+  "dependencies": {
+    "@types/blessed": "^0.1.25",
+    "@types/react": "^19.1.16",
+    "blessed": "^0.1.81",
+    "capnweb": "^0.1.0",
+    "ink": "^6.3.1",
+    "react": "^19.1.1",
+    "ws": "^8.0.0"
+  }
+}

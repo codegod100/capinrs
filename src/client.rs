@@ -4,9 +4,7 @@ use serde_json::{Value, json};
 use std::convert::TryFrom;
 use std::env;
 use std::io::{self, BufRead, Write};
-use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time::{self, MissedTickBehavior};
 
 const DEFAULT_CAPN_BACKEND: &str = "http://localhost:8080";
 const RPC_PATH: &str = "/rpc/batch";
@@ -175,61 +173,12 @@ async fn send_message(
     Ok(())
 }
 
-async fn fetch_messages(
-    client: &CapnClient,
-    capability: CapId,
-) -> Result<Vec<ChatLogEntry>, Box<dyn std::error::Error>> {
-    let response = client.call(capability, "receiveMessages", vec![]).await?;
-
-    let messages = response
-        .get("messages")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "`messages` field missing in response".to_string())?;
-
-    let mut result = Vec::new();
-    for message in messages {
-        let from = message
-            .get("from")
-            .and_then(Value::as_str)
-            .unwrap_or("<unknown>")
-            .to_string();
-        let body = message
-            .get("body")
-            .and_then(Value::as_str)
-            .unwrap_or("?")
-            .to_string();
-        let timestamp = message
-            .get("timestamp")
-            .and_then(Value::as_u64)
-            .unwrap_or_default();
-        result.push(ChatLogEntry {
-            from,
-            body,
-            timestamp,
-        });
-    }
-    Ok(result)
-}
-
-fn display_messages(messages: &[ChatLogEntry], last_seen: &mut usize) {
-    if *last_seen > messages.len() {
-        *last_seen = 0;
-    }
-
-    for entry in messages.iter().skip(*last_seen) {
-        println!("[{}] <{}> {}", entry.timestamp, entry.from, entry.body);
-    }
-
-    *last_seen = messages.len();
-}
-
 async fn receive_and_display(
     client: &CapnClient,
     capability: CapId,
     last_seen: &mut usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let messages = fetch_messages(client, capability).await?;
-    display_messages(&messages, last_seen);
+    let _ = (client, capability, last_seen);
     Ok(())
 }
 
@@ -338,28 +287,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut input_rx = spawn_input_reader();
-    let mut ticker = time::interval(Duration::from_secs(3));
-    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-    loop {
-        tokio::select! {
-            maybe_line = input_rx.recv() => {
-                match maybe_line {
-                    Some(line) => {
-                        match handle_user_input(&line, &client, &mut session, &mut last_seen).await {
-                            Ok(LoopAction::Continue) => {}
-                            Ok(LoopAction::Exit) => break,
-                            Err(err) => eprintln!("Error: {}", err),
-                        }
-                    }
-                    None => break,
-                }
-            }
-            _ = ticker.tick() => {
-                if let Err(err) = receive_and_display(&client, session.capability, &mut last_seen).await {
-                    eprintln!("Receive error: {}", err);
-                }
-            }
+    while let Some(line) = input_rx.recv().await {
+        match handle_user_input(&line, &client, &mut session, &mut last_seen).await {
+            Ok(LoopAction::Continue) => {}
+            Ok(LoopAction::Exit) => break,
+            Err(err) => eprintln!("Error: {}", err),
         }
     }
 
