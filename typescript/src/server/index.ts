@@ -175,13 +175,16 @@ export class CapnWebDurable extends RpcTarget {
   async receiveMessages(capabilityId: number) {
     console.log('Server receiveMessages called with capabilityId:', capabilityId);
     const chatState = await loadChatState(this.state);
+    console.log('Loaded chat state with', chatState.messages.length, 'messages');
 
     // Verify the session exists
     const sessionInfo = chatState.sessionCaps[String(capabilityId)];
     if (!sessionInfo) {
+      console.log('Session not found for capabilityId:', capabilityId);
       throw new Error('unknown session capability');
     }
 
+    console.log('Returning', chatState.messages.length, 'messages');
     return {
       messages: chatState.messages.map(msg => ({
         from: msg.from,

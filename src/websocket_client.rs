@@ -57,9 +57,8 @@ impl ChatClient {
         let handler = self.on_message.lock().await;
         if let Some(ref callback) = *handler {
             callback(message);
-        } else {
-            println!("{}: {}", message.from, message.body);
         }
+        // Note: Messages are handled via the message_rx channel instead of callbacks
     }
 }
 
@@ -283,7 +282,14 @@ impl WebSocketClient {
         
         let mut result = Vec::new();
         for msg in messages {
-            if let Ok(chat_msg) = serde_json::from_value(msg.clone()) {
+            // Handle nested array - messages might be wrapped in another array
+            if let Some(msg_array) = msg.as_array() {
+                for nested_msg in msg_array {
+                    if let Ok(chat_msg) = serde_json::from_value::<ChatMessage>(nested_msg.clone()) {
+                        result.push(chat_msg);
+                    }
+                }
+            } else if let Ok(chat_msg) = serde_json::from_value::<ChatMessage>(msg.clone()) {
                 result.push(chat_msg);
             }
         }

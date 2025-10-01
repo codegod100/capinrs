@@ -9,10 +9,12 @@ capnweb-server = "0.1.0"
 capnweb-client = "0.1.0"
 capnweb-core = "0.1.0"
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "full"] }
 tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
 futures-util = "0.3"
 serde = { version = "1.0", features = ["derive"] }
+ratatui = "0.25"
+crossterm = "0.27"
 
 [[bin]]
 name = "server"
@@ -25,3 +27,15 @@ path = "src/client.rs"
 [[bin]]
 name = "websocket-client"
 path = "src/websocket_client_main.rs"
+
+[[bin]]
+name = "ui-client"
+path = "src/ui_client_main.rs"
+
+[[bin]]
+name = "simple-ui-client"
+path = "src/simple_ui_main.rs"
+
+[[bin]]
+name = "ratatui-client"
+path = "src/ratatui_main.rs"
