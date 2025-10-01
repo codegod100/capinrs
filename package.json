@@ -1,16 +1,14 @@
 {
   "name": "capinrs",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev:typescript": "wrangler dev",
+    "dev:wasm": "wrangler dev --env wasm",
+    "deploy:typescript": "wrangler deploy",
+    "deploy:wasm": "wrangler deploy --env wasm",
+    "build:wasm": "cd wasm && wasm-pack build --target web --out-dir ../typescript/pkg"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "packageManager": "pnpm@10.17.1",
   "devDependencies": {
-    "capnweb": "^0.1.0"
+    "wrangler": "^3.0.0"
   }
 }

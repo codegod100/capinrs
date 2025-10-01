@@ -1,3 +1,4 @@
+# TypeScript Server (Default)
 name = "capinrs-server"
 main = "typescript/src/server/index.ts"
 compatibility_date = "2025-09-30"
@@ -11,8 +12,6 @@ bindings = [
 tag = "v1"
 new_sqlite_classes = ["CapnWebDurable"]
 
-# Removed WASM rules since we're now using pure TypeScript
-
 [dev]
 port = 8787
 local_protocol = "http"
@@ -21,3 +20,22 @@ local_protocol = "http"
 # account_id = "your-account-id"
 # routes = ["example.com/*"]
 # workers_dev = true
+
+# Rust WASM Server
+[env.wasm]
+name = "capinrs-wasm-server"
+main = "typescript/src/wasm-server/index.ts"
+compatibility_date = "2025-09-30"
+
+[env.wasm.durable_objects]
+bindings = [
+	{ name = "CAPNWEB", class_name = "CapnWebDurable" }
+]
+
+[[env.wasm.migrations]]
+tag = "v1"
+new_sqlite_classes = ["CapnWebDurable"]
+
+[env.wasm.dev]
+port = 8788
+local_protocol = "http"

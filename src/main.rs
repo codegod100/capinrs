@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 mod websocket_client;
+mod websocket_server;
 
 const CALCULATOR_CAP_ID: u64 = 1;
 const CHAT_CAP_ID: u64 = 2;

@@ -177,7 +177,19 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             // Handle command
             let input = ui.get_input();
             if !input.trim().is_empty() {
-                handle_command(&input, &client, &session, &mut ui).await;
+                // Add timeout to prevent hanging
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_secs(5),
+                    handle_command(&input, &client, &session, &mut ui)
+                ).await {
+                    Ok(_) => {
+                        // Command completed successfully
+                    }
+                    Err(_) => {
+                        // Command timed out
+                        ui.set_status("Command timed out - connection may be lost".to_string(), true);
+                    }
+                }
             }
         }
 
