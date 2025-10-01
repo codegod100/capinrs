@@ -1,36 +1,28 @@
 use capnweb_client::{Client as CapnClient, ClientConfig};
 use capnweb_core::CapId;
-use serde_json::json;
+use reqwest::Client as HttpClient;
+use serde_json::{Value, json};
 use std::env;
 
 const DEFAULT_CAPN_BACKEND: &str = "http://localhost:8080";
-const DEFAULT_WORKER_BACKEND: &str = "https://capinrs-server.veronika-m-winters.workers.dev";
 const RPC_PATH: &str = "/rpc/batch";
 
-#[derive(Debug, Clone, Copy)]
-enum BackendMode {
-    CapnWeb,
-    Worker,
-}
-
 struct ClientTarget {
-    mode: BackendMode,
     url: String,
+    fetch_stats: bool,
 }
 
 fn usage() {
     eprintln!(
         "Usage: cargo run --bin client -- [OPTIONS] [HOST_OR_URL]\n\n\
-                 Options:\n\
-                     --worker     Use the deployed Cloudflare Worker (Cap'n Web over HTTPS)\n\
-           --capn       Force Cap'n Web RPC protocol (default)\n\
-           -h, --help   Show this message\n\
+         Options:\n\
+             --stats      Fetch durable-object style state after the RPC call\n\
+             -h, --help   Show this message\n\
 \n\
-         Provide an optional host or full URL for the backend server.\n\
+         Provide an optional host or full URL for the Cap'n Web backend server.\n\
          Examples:\n\
-           cargo run --bin client -- localhost:8081\n\
-           cargo run --bin client -- --worker https://example.com/api\n\
-           cargo run --bin client -- https://api.example.com/rpc/batch\n\
+             cargo run --bin client -- localhost:8081\n\
+             cargo run --bin client -- https://api.example.com/rpc/batch\n\
          You can also set CAPINRS_SERVER_HOST in the environment."
     );
 }
@@ -58,8 +50,8 @@ fn normalize_endpoint(raw: &str, default_scheme: &str) -> String {
 
 fn resolve_target() -> ClientTarget {
     let mut args = env::args().skip(1);
-    let mut mode = BackendMode::CapnWeb;
     let mut host_arg: Option<String> = None;
+    let mut fetch_stats = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -67,9 +59,13 @@ fn resolve_target() -> ClientTarget {
                 usage();
                 std::process::exit(0);
             }
-            "--worker" => mode = BackendMode::Worker,
-            "--capn" | "--capnweb" => mode = BackendMode::CapnWeb,
+            "--stats" => fetch_stats = true,
             other => {
+                if other.starts_with('-') {
+                    eprintln!("Warning: unrecognized flag `{}`", other);
+                    continue;
+                }
+
                 if host_arg.is_none() {
                     host_arg = Some(other.to_string());
                 } else {
@@ -80,20 +76,12 @@ fn resolve_target() -> ClientTarget {
     }
 
     let env_override = env::var("CAPINRS_SERVER_HOST").ok();
-    let default_host = match mode {
-        BackendMode::CapnWeb => DEFAULT_CAPN_BACKEND.to_string(),
-        BackendMode::Worker => DEFAULT_WORKER_BACKEND.to_string(),
-    };
+    let default_host = DEFAULT_CAPN_BACKEND.to_string();
     let raw_target = host_arg.or(env_override).unwrap_or(default_host);
 
-    let scheme = match mode {
-        BackendMode::CapnWeb => "http://",
-        BackendMode::Worker => "https://",
-    };
+    let url = normalize_endpoint(&raw_target, "http://");
 
-    let url = normalize_endpoint(&raw_target, scheme);
-
-    ClientTarget { mode, url }
+    ClientTarget { url, fetch_stats }
 }
 
 #[tokio::main]
@@ -101,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let target = resolve_target();
 
     let config = ClientConfig {
-        url: target.url,
+        url: target.url.clone(),
         ..Default::default()
     };
     let client = CapnClient::new(config)?;
@@ -110,5 +98,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     println!("Result: {}", result);
+
+    if target.fetch_stats {
+        let http = HttpClient::new();
+        match http
+            .get(&target.url)
+            .header("accept", "application/json")
+            .send()
+            .await
+        {
+            Ok(response) => {
+                let status = response.status();
+                if status.is_success() {
+                    match response.json::<Value>().await {
+                        Ok(stats) => {
+                            println!("Durable object stats:");
+                            let pretty = serde_json::to_string_pretty(&stats)
+                                .unwrap_or_else(|_| stats.to_string());
+                            println!("{}", pretty);
+                        }
+                        Err(error) => {
+                            eprintln!("Failed to parse stats JSON: {}", error);
+                        }
+                    }
+                } else {
+                    let body = response.text().await.unwrap_or_default();
+                    eprintln!("Stats request failed with status {}: {}", status, body);
+                }
+            }
+            Err(error) => {
+                eprintln!("Failed to fetch stats: {}", error);
+            }
+        }
+    }
     Ok(())
 }

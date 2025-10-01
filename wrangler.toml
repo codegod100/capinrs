@@ -2,6 +2,15 @@ name = "capinrs-server"
 main = "worker/src/index.ts"
 compatibility_date = "2025-09-30"
 
+[durable_objects]
+bindings = [
+	{ name = "CAPNWEB", class_name = "CapnWebDurable" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CapnWebDurable"]
+
 [[rules]]
 globs = ["**/*.wasm"]
 type = "CompiledWasm"
