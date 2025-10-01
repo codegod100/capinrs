@@ -154,32 +154,61 @@ function ChatApp({ client, remoteMain, session }: ChatAppProps) {
   const [isError, setIsError] = useState(false);
   const { exit } = useApp();
 
+  // Calculate how many messages can fit in the terminal
+  const getMaxMessages = () => {
+    // Estimate terminal height (Ink doesn't provide direct access to terminal size)
+    // Assume 24 lines as default, reserve 8 for UI elements
+    const estimatedHeight = 24;
+    const availableHeight = Math.max(estimatedHeight - 8, 5);
+    return availableHeight;
+  };
+
+  // Add message with sliding window limit
+  const addMessageWithLimit = (message: Message) => {
+    setMessages(prev => {
+      const newMessages = [...prev, message];
+      const maxMessages = getMaxMessages();
+      if (newMessages.length > maxMessages) {
+        return newMessages.slice(-maxMessages); // Keep only the last N messages
+      }
+      return newMessages;
+    });
+  };
+
   // Set up message handler and load initial messages
   useEffect(() => {
     client.onMessage = (message) => {
-      setMessages(prev => [...prev, message]);
+      addMessageWithLimit(message);
     };
 
     // Load initial messages
     const loadInitialMessages = async () => {
       try {
         const messagesResult = await remoteMain.receiveMessages(session.capabilityId);
-        messagesResult.messages.forEach((msg: any) => {
-          setMessages(prev => [...prev, {
+        const totalMessages = messagesResult.messages.length;
+        const maxMessages = getMaxMessages();
+        
+        // Only load the last N messages that fit in the terminal
+        const startIndex = Math.max(0, totalMessages - maxMessages);
+        const recentMessages = messagesResult.messages.slice(startIndex);
+        
+        recentMessages.forEach((msg: any) => {
+          addMessageWithLimit({
             from: msg.from,
             body: msg.body,
             timestamp: msg.timestamp || Date.now()
-          }]);
+          });
         });
-        setStatus(`Connected as ${session.username}`);
+        
+        setStatus(`Connected as ${session.username} | Loaded ${recentMessages.length} recent messages (of ${totalMessages} total)`);
         setIsError(false);
         
         // Add welcome message
-        setMessages(prev => [...prev, {
+        addMessageWithLimit({
           from: 'System',
           body: `Welcome, ${session.username}! Type /help for available commands.`,
           timestamp: Date.now()
-        }]);
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setStatus(`Failed to get initial messages: ${message}`);
@@ -250,14 +279,22 @@ Messages without a leading slash are broadcast to the chat.`,
       case '/receive':
         try {
           const messagesResult = await remoteMain.receiveMessages(session.capabilityId);
-          messagesResult.messages.forEach((msg: any) => {
-            setMessages(prev => [...prev, {
+          const totalMessages = messagesResult.messages.length;
+          const maxMessages = getMaxMessages();
+          
+          // Only load the last N messages that fit in the terminal
+          const startIndex = Math.max(0, totalMessages - maxMessages);
+          const recentMessages = messagesResult.messages.slice(startIndex);
+          
+          recentMessages.forEach((msg: any) => {
+            addMessageWithLimit({
               from: msg.from,
               body: msg.body,
               timestamp: msg.timestamp || Date.now()
-            }]);
+            });
           });
-          setStatus('Fetched recent messages');
+          
+          setStatus(`Fetched ${recentMessages.length} recent messages (of ${totalMessages} total)`);
           setIsError(false);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
