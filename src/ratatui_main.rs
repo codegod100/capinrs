@@ -99,6 +99,17 @@ fn generate_random_nickname() -> String {
     format!("{}{}{}", adj, noun, num)
 }
 
+const STATUS_HELP: &str = "Type /help for commands | Press Ctrl+C to quit";
+
+fn format_status(nickname: &str, server_url: &str, detail: impl AsRef<str>) -> String {
+    let detail = detail.as_ref();
+    if detail.is_empty() {
+        format!("Server: {} | Nick: {}", server_url, nickname)
+    } else {
+        format!("Server: {} | Nick: {} | {}", server_url, nickname, detail)
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let options = match parse_cli() {
@@ -147,10 +158,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // Set initial status
     ui.set_status(
-        format!(
-            "Connected as {} | Type /help for commands | Press Ctrl+C to quit",
-            session.nickname
-        ),
+        format_status(&session.nickname, url.as_str(), STATUS_HELP),
         false,
     );
 
@@ -179,11 +187,29 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 ui.add_message(msg.clone().into());
             }
 
-            ui.set_status(format!("Connected as {} | Loaded {} recent messages (of {} total) | Type /help for commands | Press Ctrl+C to quit", 
-                session.nickname, ui.message_count(), total_messages), false);
+            ui.set_status(
+                format_status(
+                    &session.nickname,
+                    url.as_str(),
+                    format!(
+                        "Loaded {} recent messages (of {} total) | {}",
+                        ui.message_count(),
+                        total_messages,
+                        STATUS_HELP
+                    ),
+                ),
+                false,
+            );
         }
         Err(e) => {
-            ui.set_status(format!("Connected as {} | Failed to load messages: {} | Type /help for commands | Press Ctrl+C to quit", session.nickname, e), true);
+            ui.set_status(
+                format_status(
+                    &session.nickname,
+                    url.as_str(),
+                    format!("Failed to load messages: {} | {}", e, STATUS_HELP),
+                ),
+                true,
+            );
         }
     }
 
@@ -203,9 +229,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 let old_nickname = session.nickname.clone();
                 session.nickname = nick.to_string();
                 ui.set_status(
-                    format!(
-                        "Connected as {} | {} | Type /help for commands | Press Ctrl+C to quit",
-                        session.nickname, message
+                    format_status(
+                        &session.nickname,
+                        url.as_str(),
+                        format!("{} | {}", message, STATUS_HELP),
                     ),
                     false,
                 );
@@ -229,9 +256,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             }
             Err(err) => {
                 ui.set_status(
-                    format!(
-                        "Connected as {} | NickServ identify failed: {} | Type /help for commands | Press Ctrl+C to quit",
-                        session.nickname, err
+                    format_status(
+                        &session.nickname,
+                        url.as_str(),
+                        format!("NickServ identify failed: {} | {}", err, STATUS_HELP),
                     ),
                     true,
                 );
@@ -445,9 +473,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                                                     )
                                                     .await;
                                                     ui.set_status(
-                                                        format!(
-                                                            "Connected as {}",
-                                                            session.nickname
+                                                        format_status(
+                                                            &session.nickname,
+                                                            url.as_str(),
+                                                            STATUS_HELP,
                                                         ),
                                                         false,
                                                     );
@@ -531,9 +560,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                                                     )
                                                     .await;
                                                     ui.set_status(
-                                                        format!(
-                                                            "Connected as {}",
-                                                            session.nickname
+                                                        format_status(
+                                                            &session.nickname,
+                                                            url.as_str(),
+                                                            STATUS_HELP,
                                                         ),
                                                         false,
                                                     );
@@ -586,7 +616,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     // Add timeout to prevent hanging
                     match tokio::time::timeout(
                         tokio::time::Duration::from_secs(5),
-                        handle_command(&input, &client, &mut session, &mut ui),
+                        handle_command(&input, &client, &mut session, &mut ui, url.as_str()),
                     )
                     .await
                     {
@@ -597,7 +627,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         Err(_) => {
                             // Command timed out
                             ui.set_status(
-                                "Command timed out - connection may be lost".to_string(),
+                                format_status(
+                                    &session.nickname,
+                                    url.as_str(),
+                                    "Command timed out - connection may be lost",
+                                ),
                                 true,
                             );
                         }
@@ -618,6 +652,7 @@ async fn handle_command(
     client: &WebSocketClient,
     session: &mut Session,
     ui: &mut RatatuiClient,
+    server_url: &str,
 ) {
     let trimmed = input.trim();
 
@@ -633,10 +668,20 @@ async fn handle_command(
         // Send message
         match client.send_message(session.capability, trimmed).await {
             Ok(_) => {
-                ui.set_status(format!("Connected as {}", session.nickname), false);
+                ui.set_status(
+                    format_status(&session.nickname, server_url, STATUS_HELP),
+                    false,
+                );
             }
             Err(e) => {
-                ui.set_status(format!("Failed to send message: {}", e), true);
+                ui.set_status(
+                    format_status(
+                        &session.nickname,
+                        server_url,
+                        format!("Failed to send message: {}", e),
+                    ),
+                    true,
+                );
             }
         }
         return;
@@ -680,7 +725,14 @@ Messages without a leading slash are broadcast to the chat."
                 });
             }
             Err(e) => {
-                ui.set_status(format!("Whoami failed: {}", e), true);
+                ui.set_status(
+                    format_status(
+                        &session.nickname,
+                        server_url,
+                        format!("Whoami failed: {}", e),
+                    ),
+                    true,
+                );
             }
         },
         "/receive" => match client.receive_messages(session.capability).await {
@@ -688,10 +740,20 @@ Messages without a leading slash are broadcast to the chat."
                 for msg in messages {
                     ui.add_message(msg.into());
                 }
-                ui.set_status("Fetched recent messages".to_string(), false);
+                ui.set_status(
+                    format_status(&session.nickname, server_url, "Fetched recent messages"),
+                    false,
+                );
             }
             Err(e) => {
-                ui.set_status(format!("Failed to receive messages: {}", e), true);
+                ui.set_status(
+                    format_status(
+                        &session.nickname,
+                        server_url,
+                        format!("Failed to receive messages: {}", e),
+                    ),
+                    true,
+                );
             }
         },
         "/nickserv" => {
