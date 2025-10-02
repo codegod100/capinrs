@@ -9,11 +9,18 @@ type DurableObjectStateWithStorage = {
   };
 };
 
+type SessionInfo = {
+  username: string;
+  displayName?: string;
+};
+
 interface ChatState {
   credentials: Record<string, string>;
   messages: Array<{ from: string; body: string; timestamp: number }>;
   nextSessionCapId: number;
-  sessionCaps: Record<string, { username: string }>;
+  sessionCaps: Record<string, SessionInfo>;
+  registeredNicks: Record<string, string>;
+  nickOwners: Record<string, string>;
 }
 
 const DEFAULT_CHAT_STATE: ChatState = {
@@ -25,6 +32,8 @@ const DEFAULT_CHAT_STATE: ChatState = {
   messages: [],
   nextSessionCapId: SESSION_CAPABILITY_START,
   sessionCaps: {},
+  registeredNicks: {},
+  nickOwners: {},
 };
 
 function cloneDefaultChatState(): ChatState {
@@ -33,6 +42,8 @@ function cloneDefaultChatState(): ChatState {
     messages: [...DEFAULT_CHAT_STATE.messages],
     nextSessionCapId: DEFAULT_CHAT_STATE.nextSessionCapId,
     sessionCaps: { ...DEFAULT_CHAT_STATE.sessionCaps },
+    registeredNicks: { ...DEFAULT_CHAT_STATE.registeredNicks },
+    nickOwners: { ...DEFAULT_CHAT_STATE.nickOwners },
   };
 }
 
@@ -79,14 +90,36 @@ function normalizeChatState(parsed: unknown): ChatState {
     );
   }
 
-  const sessionCaps: Record<string, { username: string }> = {};
+  const sessionCaps: Record<string, SessionInfo> = {};
   if (source.sessionCaps && typeof source.sessionCaps === "object") {
     for (const [key, value] of Object.entries(source.sessionCaps as Record<string, unknown>)) {
       if (value && typeof value === "object") {
         const username = (value as Record<string, unknown>).username;
+        const displayName = (value as Record<string, unknown>).displayName;
         if (typeof username === "string") {
-          sessionCaps[key] = { username };
+          sessionCaps[key] = {
+            username,
+            ...(typeof displayName === "string" ? { displayName } : {}),
+          };
         }
+      }
+    }
+  }
+
+  const registeredNicks: Record<string, string> = { ...base.registeredNicks };
+  if (source.registeredNicks && typeof source.registeredNicks === "object") {
+    for (const [key, value] of Object.entries(source.registeredNicks as Record<string, unknown>)) {
+      if (typeof value === "string") {
+        registeredNicks[key] = value;
+      }
+    }
+  }
+
+  const nickOwners: Record<string, string> = { ...base.nickOwners };
+  if (source.nickOwners && typeof source.nickOwners === "object") {
+    for (const [key, value] of Object.entries(source.nickOwners as Record<string, unknown>)) {
+      if (typeof value === "string") {
+        nickOwners[key] = value;
       }
     }
   }
@@ -96,6 +129,8 @@ function normalizeChatState(parsed: unknown): ChatState {
     messages,
     nextSessionCapId,
     sessionCaps,
+    registeredNicks,
+    nickOwners,
   };
 }
 
@@ -275,7 +310,10 @@ async function tryHandleChatBatch(payload: string, state: DurableObjectStateWith
           sessionCapId += 1;
         }
         chatState.nextSessionCapId = sessionCapId + 1;
-        chatState.sessionCaps[String(sessionCapId)] = { username };
+        chatState.sessionCaps[String(sessionCapId)] = {
+          username,
+          displayName: username,
+        };
         mutated = true;
 
         payloadResult = {
@@ -320,8 +358,9 @@ async function tryHandleChatBatch(payload: string, state: DurableObjectStateWith
           }
           const message = args[0] as string;
           console.log('Processing sendMessage with message:', message);
+          const from = sessionInfo.displayName ?? sessionInfo.username;
           const newMessage = {
-            from: sessionInfo.username,
+            from,
             body: message,
             timestamp: Date.now(),
           };
@@ -366,10 +405,108 @@ async function tryHandleChatBatch(payload: string, state: DurableObjectStateWith
           };
           break;
         }
+        case "registerNick": {
+          if (args.length !== 2 || typeof args[0] !== "string" || typeof args[1] !== "string") {
+            payloadResult = { success: false, message: "`registerNick` expects <nickname>, <password>" };
+            break;
+          }
+
+          const [nickname, password] = args as [string, string];
+          if (chatState.registeredNicks[nickname]) {
+            payloadResult = {
+              success: true,
+              value: {
+                status: "error",
+                message: "Nickname already registered",
+              },
+            };
+            break;
+          }
+
+          chatState.registeredNicks[nickname] = password;
+          chatState.nickOwners[nickname] = sessionInfo.username;
+          sessionInfo.displayName = nickname;
+          chatState.sessionCaps[String(capabilityId)] = sessionInfo;
+          mutated = true;
+
+          payloadResult = {
+            success: true,
+            value: {
+              status: "ok",
+              message: `Nickname '${nickname}' registered successfully`,
+            },
+          };
+          break;
+        }
+        case "identifyNick": {
+          if (args.length !== 2 || typeof args[0] !== "string" || typeof args[1] !== "string") {
+            payloadResult = { success: false, message: "`identifyNick` expects <nickname>, <password>" };
+            break;
+          }
+
+          const [nickname, password] = args as [string, string];
+          const storedPassword = chatState.registeredNicks[nickname];
+          if (!storedPassword) {
+            payloadResult = {
+              success: true,
+              value: {
+                status: "error",
+                message: "Nickname not registered",
+              },
+            };
+            break;
+          }
+
+          if (storedPassword !== password) {
+            payloadResult = {
+              success: true,
+              value: {
+                status: "error",
+                message: "Invalid password",
+              },
+            };
+            break;
+          }
+
+          const owner = chatState.nickOwners[nickname];
+          if (owner && owner !== sessionInfo.username) {
+            console.log(`identifyNick ownership transfer for '${nickname}' from '${owner}' to '${sessionInfo.username}'`);
+          }
+
+          chatState.nickOwners[nickname] = sessionInfo.username;
+          sessionInfo.displayName = nickname;
+          chatState.sessionCaps[String(capabilityId)] = sessionInfo;
+          mutated = true;
+
+          payloadResult = {
+            success: true,
+            value: {
+              status: "ok",
+              message: `Successfully identified as '${nickname}'`,
+            },
+          };
+          break;
+        }
+        case "checkNick": {
+          if (args.length !== 1 || typeof args[0] !== "string") {
+            payloadResult = { success: false, message: "`checkNick` expects <nickname>" };
+            break;
+          }
+
+          const nickname = args[0] as string;
+          payloadResult = {
+            success: true,
+            value: {
+              status: "ok",
+              registered: !!chatState.registeredNicks[nickname],
+            },
+          };
+          break;
+        }
         case "whoami": {
           payloadResult = {
             success: true,
-            value: { username: sessionInfo.username },
+            value: { username: sessionInfo.displayName ?? sessionInfo.username },
           };
           break;
         }

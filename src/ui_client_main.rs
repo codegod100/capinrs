@@ -1,13 +1,13 @@
-use std::sync::Arc;
 use std::error::Error;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 mod ui_client;
 mod websocket_client;
 
+use capnweb_core::CapId;
 use ui_client::{ChatUI, Session};
 use websocket_client::WebSocketClient;
-use capnweb_core::CapId;
 
 fn usage() {
     println!(
@@ -84,7 +84,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let username = prompt("Username: ")?;
     let password = prompt("Password: ")?;
 
-    let client = WebSocketClient::new(&url).await.map_err(|e| format!("Failed to connect to WebSocket: {}", e))?;
+    let client = WebSocketClient::new(&url)
+        .await
+        .map_err(|e| format!("Failed to connect to WebSocket: {}", e))?;
 
     let capability = match client.authenticate(&username, &password).await {
         Ok(cap) => cap,
@@ -95,7 +97,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     };
 
     println!("Welcome, {}! Starting UI...", username);
-    
+
     let session = Session {
         username,
         capability,
@@ -107,7 +109,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // Create UI
     let mut ui = ChatUI::new(message_rx)?;
-    
+
     // Set initial status
     ui.set_status(format!("Connected as {}", session.username), false);
 

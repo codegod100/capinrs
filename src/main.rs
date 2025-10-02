@@ -74,6 +74,8 @@ struct ChatState {
     messages: Vec<ChatMessage>,
     next_session_cap_id: u64,
     active_sessions: HashMap<u64, String>,
+    registered_nicks: HashMap<String, String>, // nickname -> password
+    nick_owners: HashMap<String, String>,      // nickname -> username
 }
 
 #[derive(Clone)]
@@ -90,24 +92,15 @@ impl ChatState {
             messages: Vec::new(),
             next_session_cap_id: SESSION_CAP_START,
             active_sessions: HashMap::new(),
+            registered_nicks: HashMap::new(),
+            nick_owners: HashMap::new(),
         };
-        state
-            .credentials
-            .insert("alice".to_string(), "password123".to_string());
-        state
-            .credentials
-            .insert("bob".to_string(), "hunter2".to_string());
-        state
-            .credentials
-            .insert("carol".to_string(), "letmein".to_string());
         state
     }
 
     fn validate_credentials(&self, username: &str, password: &str) -> bool {
-        self.credentials
-            .get(username)
-            .map(|stored| stored == password)
-            .unwrap_or(false)
+        // Accept any username with default password
+        password == "default_password"
     }
 
     fn allocate_session_capability(&mut self, username: &str) -> u64 {
@@ -143,6 +136,39 @@ impl ChatState {
             .collect();
 
         json!({ "messages": messages })
+    }
+
+    fn register_nickname(
+        &mut self,
+        nickname: &str,
+        password: &str,
+        username: &str,
+    ) -> Result<(), String> {
+        if self.registered_nicks.contains_key(nickname) {
+            return Err("Nickname already registered".to_string());
+        }
+        self.registered_nicks
+            .insert(nickname.to_string(), password.to_string());
+        self.nick_owners
+            .insert(nickname.to_string(), username.to_string());
+        Ok(())
+    }
+
+    fn identify_nickname(&self, nickname: &str, password: &str) -> Result<String, String> {
+        match self.registered_nicks.get(nickname) {
+            Some(stored_password) => {
+                if stored_password == password {
+                    Ok(self.nick_owners.get(nickname).unwrap().clone())
+                } else {
+                    Err("Invalid password".to_string())
+                }
+            }
+            None => Err("Nickname not registered".to_string()),
+        }
+    }
+
+    fn is_nickname_registered(&self, nickname: &str) -> bool {
+        self.registered_nicks.contains_key(nickname)
     }
 }
 
@@ -219,6 +245,82 @@ impl RpcTarget for ChatSessionCapability {
             "whoami" => Ok(json!({
                 "username": self.username,
             })),
+            "registerNick" => {
+                if args.len() != 2 {
+                    return Err(RpcError::bad_request(
+                        "`registerNick` expects <nickname>, <password>".to_string(),
+                    ));
+                }
+                let nickname = args[0]
+                    .as_str()
+                    .ok_or_else(|| RpcError::bad_request("nickname must be a string"))?;
+                let password = args[1]
+                    .as_str()
+                    .ok_or_else(|| RpcError::bad_request("password must be a string"))?;
+
+                let mut state = self.state.lock().await;
+                match state.register_nickname(nickname, password, &self.username) {
+                    Ok(_) => Ok(json!({
+                        "status": "ok",
+                        "message": format!("Nickname '{}' registered successfully", nickname)
+                    })),
+                    Err(e) => Ok(json!({
+                        "status": "error",
+                        "message": e
+                    })),
+                }
+            }
+            "identifyNick" => {
+                if args.len() != 2 {
+                    return Err(RpcError::bad_request(
+                        "`identifyNick` expects <nickname>, <password>".to_string(),
+                    ));
+                }
+                let nickname = args[0]
+                    .as_str()
+                    .ok_or_else(|| RpcError::bad_request("nickname must be a string"))?;
+                let password = args[1]
+                    .as_str()
+                    .ok_or_else(|| RpcError::bad_request("password must be a string"))?;
+
+                let state = self.state.lock().await;
+                match state.identify_nickname(nickname, password) {
+                    Ok(owner) => {
+                        if owner == self.username {
+                            Ok(json!({
+                                "status": "ok",
+                                "message": format!("Successfully identified as '{}'", nickname)
+                            }))
+                        } else {
+                            Ok(json!({
+                                "status": "error",
+                                "message": "You are not the owner of this nickname"
+                            }))
+                        }
+                    }
+                    Err(e) => Ok(json!({
+                        "status": "error",
+                        "message": e
+                    })),
+                }
+            }
+            "checkNick" => {
+                if args.len() != 1 {
+                    return Err(RpcError::bad_request(
+                        "`checkNick` expects <nickname>".to_string(),
+                    ));
+                }
+                let nickname = args[0]
+                    .as_str()
+                    .ok_or_else(|| RpcError::bad_request("nickname must be a string"))?;
+
+                let state = self.state.lock().await;
+                let is_registered = state.is_nickname_registered(nickname);
+                Ok(json!({
+                    "status": "ok",
+                    "registered": is_registered
+                }))
+            }
             _ => Err(RpcError::not_found(format!(
                 "method `{}` not found",
                 member

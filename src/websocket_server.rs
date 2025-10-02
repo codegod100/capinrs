@@ -1,5 +1,6 @@
 use capnweb_core::{CapId, RpcError, async_trait};
 use capnweb_server::{CapTable, RpcTarget};
+use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -8,7 +9,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex, mpsc};
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
-use futures_util::{SinkExt, StreamExt};
 use uuid::Uuid;
 
 const CALCULATOR_CAP_ID: u64 = 1;
@@ -36,14 +36,14 @@ impl WebSocketServer {
         let (message_tx, mut message_rx) = mpsc::unbounded_channel();
         let clients = Arc::new(Mutex::new(HashMap::<Uuid, ClientConnection>::new()));
         let clients_clone = clients.clone();
-        
+
         // Spawn message broadcaster task
         tokio::spawn(async move {
             while let Some(message) = message_rx.recv().await {
                 let clients = clients_clone.lock().await;
                 for client in clients.values() {
                     let _ = client.sender.send(Message::Text(
-                        json!(["push", ["pipeline", 0, ["receiveMessage"], [message]]]).to_string()
+                        json!(["push", ["pipeline", 0, ["receiveMessage"], [message]]]).to_string(),
                     ));
                 }
             }
@@ -51,7 +51,7 @@ impl WebSocketServer {
 
         let cap_table = Arc::new(CapTable::new());
         let chat_service = Arc::new(ChatService::new(cap_table.clone(), message_tx.clone()));
-        
+
         Self {
             calculator: Arc::new(Calculator::new()),
             chat_service,
@@ -63,12 +63,12 @@ impl WebSocketServer {
     pub async fn handle_websocket(&self, stream: WebSocketStream<tokio::net::TcpStream>) {
         let (mut ws_sender, mut ws_receiver) = stream.split();
         let client_id = Uuid::new_v4();
-        
+
         // Handle incoming messages
         let chat_service = self.chat_service.clone();
         let calculator = self.calculator.clone();
         let clients = self.clients.clone();
-        
+
         while let Some(msg) = ws_receiver.next().await {
             match msg {
                 Ok(Message::Text(text)) => {
@@ -78,10 +78,17 @@ impl WebSocketServer {
                                 match array[0].as_str() {
                                     Some("push") => {
                                         if let Some(pipeline) = array[1].as_array() {
-                                            if pipeline.len() >= 4 && pipeline[0].as_str() == Some("pipeline") {
+                                            if pipeline.len() >= 4
+                                                && pipeline[0].as_str() == Some("pipeline")
+                                            {
                                                 let import_id = pipeline[1].as_u64().unwrap_or(0);
-                                                let method = pipeline[2].as_array().and_then(|m| m.get(0)).and_then(Value::as_str);
-                                                let args = if let Some(args_array) = pipeline[3].as_array() {
+                                                let method = pipeline[2]
+                                                    .as_array()
+                                                    .and_then(|m| m.get(0))
+                                                    .and_then(Value::as_str);
+                                                let args = if let Some(args_array) =
+                                                    pipeline[3].as_array()
+                                                {
                                                     args_array.clone()
                                                 } else {
                                                     Vec::new()
@@ -93,12 +100,18 @@ impl WebSocketServer {
                                                         chat_service.call("auth", args).await
                                                     }
                                                     Some("sendMessage") => {
-                                                        println!("WebSocket server: sendMessage called");
+                                                        println!(
+                                                            "WebSocket server: sendMessage called"
+                                                        );
                                                         chat_service.call("sendMessage", args).await
                                                     }
                                                     Some("receiveMessages") => {
-                                                        println!("WebSocket server: receiveMessages called");
-                                                        chat_service.call("receiveMessages", args).await
+                                                        println!(
+                                                            "WebSocket server: receiveMessages called"
+                                                        );
+                                                        chat_service
+                                                            .call("receiveMessages", args)
+                                                            .await
                                                     }
                                                     Some("whoami") => {
                                                         println!("WebSocket server: whoami called");
@@ -111,18 +124,29 @@ impl WebSocketServer {
                                                         calculator.call("stats", args).await
                                                     }
                                                     _ => {
-                                                        println!("WebSocket server: unknown method: {:?}", method);
-                                                        Err(RpcError::not_found("Unknown method".to_string()))
+                                                        println!(
+                                                            "WebSocket server: unknown method: {:?}",
+                                                            method
+                                                        );
+                                                        Err(RpcError::not_found(
+                                                            "Unknown method".to_string(),
+                                                        ))
                                                     }
                                                 };
 
                                                 // Send response
                                                 let response = match result {
-                                                    Ok(value) => json!(["resolve", import_id, value]),
-                                                    Err(error) => json!(["reject", import_id, {"message": error.to_string()}]),
+                                                    Ok(value) => {
+                                                        json!(["resolve", import_id, value])
+                                                    }
+                                                    Err(error) => {
+                                                        json!(["reject", import_id, {"message": error.to_string()}])
+                                                    }
                                                 };
-                                                
-                                                let _ = ws_sender.send(Message::Text(response.to_string())).await;
+
+                                                let _ = ws_sender
+                                                    .send(Message::Text(response.to_string()))
+                                                    .await;
                                             }
                                         }
                                     }
@@ -131,7 +155,9 @@ impl WebSocketServer {
                                         if array.len() >= 2 {
                                             let pull_id = array[1].as_u64().unwrap_or(0);
                                             let resolve_msg = json!(["resolve", pull_id, null]);
-                                            let _ = ws_sender.send(Message::Text(resolve_msg.to_string())).await;
+                                            let _ = ws_sender
+                                                .send(Message::Text(resolve_msg.to_string()))
+                                                .await;
                                         }
                                     }
                                     _ => {}
@@ -205,7 +231,10 @@ struct ChatService {
 }
 
 impl ChatService {
-    fn new(cap_table: Arc<CapTable>, message_broadcaster: mpsc::UnboundedSender<ChatMessage>) -> Self {
+    fn new(
+        cap_table: Arc<CapTable>,
+        message_broadcaster: mpsc::UnboundedSender<ChatMessage>,
+    ) -> Self {
         Self {
             state: Arc::new(Mutex::new(ChatState::with_defaults())),
             cap_table,
@@ -299,8 +328,16 @@ struct ChatSessionCapability {
 }
 
 impl ChatSessionCapability {
-    fn new(state: Arc<Mutex<ChatState>>, username: String, message_broadcaster: mpsc::UnboundedSender<ChatMessage>) -> Self {
-        Self { state, username, message_broadcaster }
+    fn new(
+        state: Arc<Mutex<ChatState>>,
+        username: String,
+        message_broadcaster: mpsc::UnboundedSender<ChatMessage>,
+    ) -> Self {
+        Self {
+            state,
+            username,
+            message_broadcaster,
+        }
     }
 }
 

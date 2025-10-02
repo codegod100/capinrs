@@ -37,19 +37,13 @@ impl ChatState {
             active_sessions: HashMap::new(),
         };
         
-        // Add default credentials
-        state.credentials.insert("alice".to_string(), "password123".to_string());
-        state.credentials.insert("bob".to_string(), "hunter2".to_string());
-        state.credentials.insert("carol".to_string(), "letmein".to_string());
         
         state
     }
 
     fn validate_credentials(&self, username: &str, password: &str) -> bool {
-        self.credentials
-            .get(username)
-            .map(|stored| stored == password)
-            .unwrap_or(false)
+        // Accept any username with default password
+        password == "default_password"
     }
 
     fn allocate_session_capability(&mut self, username: &str) -> u64 {

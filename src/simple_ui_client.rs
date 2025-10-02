@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use std::error::Error;
+use std::io::{self, BufRead, BufReader, Write};
+use std::sync::Arc;
 use tokio::sync::mpsc;
-use std::io::{self, Write, BufRead, BufReader};
 
 use crate::websocket_client::WebSocketClient;
 use capnweb_core::CapId;
@@ -92,7 +92,11 @@ impl SimpleUI {
     async fn handle_input(&mut self, input: &str) {
         if !input.starts_with('/') {
             // Send message
-            match self.client.send_message(self.session.capability, input).await {
+            match self
+                .client
+                .send_message(self.session.capability, input)
+                .await
+            {
                 Ok(_) => {
                     println!("✓ Message sent");
                 }
@@ -126,21 +130,22 @@ impl SimpleUI {
                     }
                 }
             }
-            "/receive" => {
-                match self.client.receive_messages(self.session.capability).await {
-                    Ok(messages) => {
-                        println!("Recent messages:");
-                        for msg in messages {
-                            println!("  {}: {}", msg.from, msg.body);
-                        }
-                    }
-                    Err(e) => {
-                        println!("Failed to receive messages: {}", e);
+            "/receive" => match self.client.receive_messages(self.session.capability).await {
+                Ok(messages) => {
+                    println!("Recent messages:");
+                    for msg in messages {
+                        println!("  {}: {}", msg.from, msg.body);
                     }
                 }
-            }
+                Err(e) => {
+                    println!("Failed to receive messages: {}", e);
+                }
+            },
             _ => {
-                println!("Unknown command `{}`. Type /help for a list of commands.", command);
+                println!(
+                    "Unknown command `{}`. Type /help for a list of commands.",
+                    command
+                );
             }
         }
     }

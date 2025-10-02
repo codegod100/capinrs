@@ -31,22 +31,27 @@ export default {
 
 // RPC target for individual chat sessions
 class ChatSession extends RpcTarget {
+  private currentNickname: string;
+
   constructor(
     private state: DurableObjectStateWithStorage,
     private username: string,
     private capabilityId: number
   ) {
     super();
+    this.currentNickname = username; // Start with the login username
   }
 
   async sendMessage(message: string) {
+    console.log(`DEBUG: sendMessage called with message='${message}', currentNickname='${this.currentNickname}', username='${this.username}'`);
     const chatState = await loadChatState(this.state);
 
     const newMessage = {
-      from: this.username,
+      from: this.currentNickname,
       body: message,
       timestamp: Date.now(),
     };
+    console.log(`DEBUG: Created message with from='${newMessage.from}'`);
 
     chatState.messages.push(newMessage);
     await persistChatState(this.state, chatState);
@@ -74,6 +79,88 @@ class ChatSession extends RpcTarget {
 
   async whoami() {
     return { username: this.username };
+  }
+
+  async registerNick(nickname: string, password: string) {
+    const chatState = await loadChatState(this.state);
+
+    if (chatState.registeredNicks[nickname]) {
+      return {
+        status: 'error',
+        message: 'Nickname already registered'
+      };
+    }
+
+    chatState.registeredNicks[nickname] = password;
+    chatState.nickOwners[nickname] = this.username;
+    await persistChatState(this.state, chatState);
+
+    // Update the current nickname for this session
+    this.currentNickname = nickname;
+
+    return {
+      status: 'ok',
+      message: `Nickname '${nickname}' registered successfully`
+    };
+  }
+
+  async identifyNick(nickname: string, password: string) {
+    const passwordSummary = typeof password === 'string' ? password.length : 'unknown';
+    console.log(`DEBUG: identifyNick called with nickname='${nickname}', password length='${passwordSummary}', username='${this.username}'`);
+    const chatState = await loadChatState(this.state);
+
+    const storedPassword = chatState.registeredNicks[nickname];
+    console.log(`DEBUG: Stored password for '${nickname}': ${storedPassword ? 'exists' : 'not found'}`);
+    if (!storedPassword) {
+      console.log(`DEBUG: Nickname '${nickname}' not registered`);
+      return {
+        status: 'error',
+        message: 'Nickname not registered'
+      };
+    }
+
+    if (storedPassword !== password) {
+      console.log(`DEBUG: Password mismatch for '${nickname}' - stored: '${storedPassword}', provided: '${password}'`);
+      return {
+        status: 'error',
+        message: 'Invalid password'
+      };
+    }
+
+    const owner = chatState.nickOwners[nickname];
+    console.log(`DEBUG: Owner of '${nickname}': '${owner}', current username: '${this.username}'`);
+    if (owner && owner !== this.username) {
+      console.log(`DEBUG: Ownership transfer for nickname '${nickname}' from '${owner}' to '${this.username}' after successful password check`);
+    }
+
+    // Record the latest owner and update the nickname for this session
+    chatState.nickOwners[nickname] = this.username;
+    console.log(`DEBUG: Updating currentNickname from '${this.currentNickname}' to '${nickname}'`);
+    this.currentNickname = nickname;
+
+    await persistChatState(this.state, chatState);
+
+    console.log(`DEBUG: Identify successful for '${nickname}'`);
+    const result = {
+      status: 'ok',
+      message: `Successfully identified as '${nickname}'`
+    };
+    console.log(`DEBUG: Returning result:`, result);
+    return result;
+  }
+
+  async checkNick(nickname: string) {
+    const chatState = await loadChatState(this.state);
+    return {
+      status: 'ok',
+      registered: !!chatState.registeredNicks[nickname]
+    };
+  }
+
+  async log(message: string) {
+    console.log(`DEBUG: log method called with message: ${message}`);
+    console.log(`CLIENT LOG [${this.username}]: ${message}`);
+    return { status: 'ok' };
   }
 }
 
@@ -114,8 +201,8 @@ export class CapnWebDurable extends RpcTarget {
   async auth(username: string, password: string) {
     const chatState = await loadChatState(this.state);
 
-    const stored = chatState.credentials[username];
-    if (!stored || stored !== password) {
+    // Accept any username with default password
+    if (password !== 'default_password') {
       throw new Error('invalid credentials');
     }
 
@@ -125,7 +212,10 @@ export class CapnWebDurable extends RpcTarget {
       sessionCapId += 1;
     }
     chatState.nextSessionCapId = sessionCapId + 1;
-    chatState.sessionCaps[String(sessionCapId)] = { username };
+    chatState.sessionCaps[String(sessionCapId)] = {
+      username,
+      displayName: username,
+    };
 
     await persistChatState(this.state, chatState);
 
@@ -149,8 +239,10 @@ export class CapnWebDurable extends RpcTarget {
       throw new Error('unknown session capability');
     }
 
+    const from = sessionInfo.displayName ?? sessionInfo.username;
+
     const newMessage = {
-      from: sessionInfo.username,
+      from,
       body: message,
       timestamp: Date.now(),
     };
@@ -203,7 +295,99 @@ export class CapnWebDurable extends RpcTarget {
       throw new Error('unknown session capability');
     }
 
-    return { username: sessionInfo.username };
+    const username = sessionInfo.displayName ?? sessionInfo.username;
+    return { username };
+  }
+
+  async registerNick(capabilityId: number, nickname: string, password: string) {
+    if (typeof nickname !== 'string' || typeof password !== 'string') {
+      throw new TypeError('`registerNick` expects <capabilityId>, <nickname>, <password>');
+    }
+
+    const chatState = await loadChatState(this.state);
+    const sessionInfo = chatState.sessionCaps[String(capabilityId)];
+    if (!sessionInfo) {
+      throw new Error('unknown session capability');
+    }
+
+    if (chatState.registeredNicks[nickname]) {
+      return {
+        status: 'error',
+        message: 'Nickname already registered',
+      };
+    }
+
+    chatState.registeredNicks[nickname] = password;
+    chatState.nickOwners[nickname] = sessionInfo.username;
+    sessionInfo.displayName = nickname;
+    chatState.sessionCaps[String(capabilityId)] = sessionInfo;
+
+    await persistChatState(this.state, chatState);
+
+    return {
+      status: 'ok',
+      message: `Nickname '${nickname}' registered successfully`,
+    };
+  }
+
+  async identifyNick(capabilityId: number, nickname: string, password: string) {
+    if (typeof nickname !== 'string' || typeof password !== 'string') {
+      throw new TypeError('`identifyNick` expects <capabilityId>, <nickname>, <password>');
+    }
+
+    const chatState = await loadChatState(this.state);
+    const sessionInfo = chatState.sessionCaps[String(capabilityId)];
+    if (!sessionInfo) {
+      throw new Error('unknown session capability');
+    }
+
+    const storedPassword = chatState.registeredNicks[nickname];
+    if (!storedPassword) {
+      return {
+        status: 'error',
+        message: 'Nickname not registered',
+      };
+    }
+
+    if (storedPassword !== password) {
+      return {
+        status: 'error',
+        message: 'Invalid password',
+      };
+    }
+
+    const owner = chatState.nickOwners[nickname];
+    if (owner && owner !== sessionInfo.username) {
+      console.log(`DEBUG: Ownership transfer for nickname '${nickname}' from '${owner}' to '${sessionInfo.username}' after successful password check`);
+    }
+
+    chatState.nickOwners[nickname] = sessionInfo.username;
+    sessionInfo.displayName = nickname;
+    chatState.sessionCaps[String(capabilityId)] = sessionInfo;
+
+    await persistChatState(this.state, chatState);
+
+    return {
+      status: 'ok',
+      message: `Successfully identified as '${nickname}'`,
+    };
+  }
+
+  async checkNick(capabilityId: number, nickname: string) {
+    if (typeof nickname !== 'string') {
+      throw new TypeError('`checkNick` expects <capabilityId>, <nickname>');
+    }
+
+    const chatState = await loadChatState(this.state);
+    const sessionInfo = chatState.sessionCaps[String(capabilityId)];
+    if (!sessionInfo) {
+      throw new Error('unknown session capability');
+    }
+
+    return {
+      status: 'ok',
+      registered: !!chatState.registeredNicks[nickname],
+    };
   }
 
   async broadcastMessage(message: { from: string; body: string; timestamp: number }) {
@@ -235,6 +419,21 @@ export class CapnWebDurable extends RpcTarget {
         this.clients.delete(clientStub);
       });
     }
+  }
+
+  async log(capabilityId: number, message: string) {
+    console.log(`DEBUG: log method called with capabilityId: ${capabilityId}, message: ${message}`);
+    
+    // Look up session in chat state instead of sessions map
+    const chatState = await loadChatState(this.state);
+    const sessionCap = chatState.sessionCaps[String(capabilityId)];
+    if (sessionCap) {
+      const label = sessionCap.displayName ?? sessionCap.username;
+      console.log(`CLIENT LOG [${label}]: ${message}`);
+    } else {
+      console.log(`CLIENT LOG [unknown session ${capabilityId}]: ${message}`);
+    }
+    return { status: 'ok' };
   }
 }
 
@@ -312,22 +511,27 @@ async function readDurableStats(state: DurableObjectStateWithStorage) {
   };
 }
 
+type SessionInfo = {
+  username: string;
+  displayName?: string;
+};
+
 type ChatState = {
   credentials: Record<string, string>;
   messages: Array<{ from: string; body: string; timestamp: number }>;
   nextSessionCapId: number;
-  sessionCaps: Record<string, { username: string }>;
+  sessionCaps: Record<string, SessionInfo>;
+  registeredNicks: Record<string, string>; // nickname -> password
+  nickOwners: Record<string, string>; // nickname -> username
 };
 
 const DEFAULT_CHAT_STATE: ChatState = {
-  credentials: {
-    alice: "password123",
-    bob: "hunter2",
-    carol: "letmein",
-  },
+  credentials: {},
   messages: [],
   nextSessionCapId: SESSION_CAPABILITY_START,
   sessionCaps: {},
+  registeredNicks: {},
+  nickOwners: {},
 };
 
 function cloneDefaultChatState(): ChatState {
@@ -336,6 +540,8 @@ function cloneDefaultChatState(): ChatState {
     messages: [...DEFAULT_CHAT_STATE.messages],
     nextSessionCapId: DEFAULT_CHAT_STATE.nextSessionCapId,
     sessionCaps: { ...DEFAULT_CHAT_STATE.sessionCaps },
+    registeredNicks: { ...DEFAULT_CHAT_STATE.registeredNicks },
+    nickOwners: { ...DEFAULT_CHAT_STATE.nickOwners },
   };
 }
 
@@ -382,14 +588,36 @@ function normalizeChatState(parsed: unknown): ChatState {
     );
   }
 
-  const sessionCaps: Record<string, { username: string }> = {};
+  const sessionCaps: Record<string, SessionInfo> = {};
   if (source.sessionCaps && typeof source.sessionCaps === "object") {
     for (const [key, value] of Object.entries(source.sessionCaps as Record<string, unknown>)) {
       if (value && typeof value === "object") {
         const username = (value as Record<string, unknown>).username;
+        const displayName = (value as Record<string, unknown>).displayName;
         if (typeof username === "string") {
-          sessionCaps[key] = { username };
+          sessionCaps[key] = {
+            username,
+            ...(typeof displayName === 'string' ? { displayName } : {}),
+          };
         }
+      }
+    }
+  }
+
+  const registeredNicks: Record<string, string> = { ...base.registeredNicks };
+  if (source.registeredNicks && typeof source.registeredNicks === "object") {
+    for (const [key, value] of Object.entries(source.registeredNicks as Record<string, unknown>)) {
+      if (typeof value === "string") {
+        registeredNicks[key] = value;
+      }
+    }
+  }
+
+  const nickOwners: Record<string, string> = { ...base.nickOwners };
+  if (source.nickOwners && typeof source.nickOwners === "object") {
+    for (const [key, value] of Object.entries(source.nickOwners as Record<string, unknown>)) {
+      if (typeof value === "string") {
+        nickOwners[key] = value;
       }
     }
   }
@@ -399,6 +627,8 @@ function normalizeChatState(parsed: unknown): ChatState {
     messages,
     nextSessionCapId,
     sessionCaps,
+    registeredNicks,
+    nickOwners,
   };
 }
 

@@ -1,23 +1,25 @@
+use crossterm::{
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+    },
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
 use ratatui::{
+    Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
-    Frame, Terminal,
 };
-use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
+use serde_json::Value;
 use std::{
     io,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::mpsc;
-use serde_json::Value;
 
 use crate::websocket_client::WebSocketClient;
 use capnweb_core::CapId;
@@ -105,7 +107,9 @@ pub struct ChatUI {
 }
 
 impl ChatUI {
-    pub fn new(message_rx: Arc<Mutex<mpsc::UnboundedReceiver<ChatMessage>>>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new(
+        message_rx: Arc<Mutex<mpsc::UnboundedReceiver<ChatMessage>>>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         // Setup terminal
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -124,12 +128,16 @@ impl ChatUI {
         self.app.set_status(status, is_error);
     }
 
-    pub async fn run(&mut self, client: Arc<WebSocketClient>, session: Session) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn run(
+        &mut self,
+        client: Arc<WebSocketClient>,
+        session: Session,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Spawn task to handle incoming messages
         let message_rx = self.message_rx.clone();
         let app_messages = Arc::new(Mutex::new(Vec::<ChatMessage>::new()));
         let app_messages_clone = app_messages.clone();
-        
+
         tokio::spawn(async move {
             let mut rx = message_rx.lock().unwrap();
             while let Some(msg) = rx.recv().await {
@@ -162,7 +170,7 @@ impl ChatUI {
                         if self.app.should_quit {
                             break;
                         }
-                        
+
                         // Handle command
                         let input = self.app.get_input();
                         if !input.trim().is_empty() {
@@ -180,18 +188,25 @@ impl ChatUI {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(1), // Messages area
+                Constraint::Min(1),    // Messages area
                 Constraint::Length(3), // Input area
                 Constraint::Length(1), // Status bar
             ])
             .split(f.size());
 
         // Messages area
-        let messages: Vec<ListItem> = self.app.messages
+        let messages: Vec<ListItem> = self
+            .app
+            .messages
             .iter()
             .map(|msg| {
                 ListItem::new(Line::from(vec![
-                    Span::styled(&msg.from, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        &msg.from,
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw(": "),
                     Span::raw(&msg.body),
                 ]))
@@ -213,7 +228,11 @@ impl ChatUI {
         f.render_widget(input_paragraph, chunks[1]);
 
         // Status bar
-        let status_color = if self.app.is_error { Color::Red } else { Color::Blue };
+        let status_color = if self.app.is_error {
+            Color::Red
+        } else {
+            Color::Blue
+        };
         let status_paragraph = Paragraph::new(self.app.status.as_str())
             .block(Block::default().borders(Borders::ALL))
             .style(Style::default().fg(Color::White).bg(status_color));
@@ -223,15 +242,17 @@ impl ChatUI {
 
     async fn handle_command(&mut self, input: &str, client: &WebSocketClient, session: &Session) {
         let trimmed = input.trim();
-        
+
         if !trimmed.starts_with('/') {
             // Send message
             match client.send_message(session.capability, trimmed).await {
                 Ok(_) => {
-                    self.app.set_status(format!("Connected as {}", session.username), false);
+                    self.app
+                        .set_status(format!("Connected as {}", session.username), false);
                 }
                 Err(e) => {
-                    self.app.set_status(format!("Failed to send message: {}", e), true);
+                    self.app
+                        .set_status(format!("Failed to send message: {}", e), true);
                 }
             }
             return;
@@ -252,45 +273,57 @@ impl ChatUI {
   /whoami                Show current session
   /receive               Fetch and display messages
   /quit                  Exit the client
-Messages without a leading slash are broadcast to the chat.".to_string(),
-                    timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64,
+Messages without a leading slash are broadcast to the chat."
+                        .to_string(),
+                    timestamp: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64,
                 });
             }
-            "/whoami" => {
-                match client.whoami(session.capability).await {
-                    Ok(result) => {
-                        if let Some(username) = result.get("username").and_then(|v| v.as_str()) {
-                            self.app.add_message(ChatMessage {
-                                from: "System".to_string(),
-                                body: format!("You are {}", username),
-                                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64,
-                            });
-                            self.app.set_status(format!("Authenticated as {}", username), false);
-                        }
-                    }
-                    Err(e) => {
-                        self.app.set_status(format!("Whoami failed: {}", e), true);
-                    }
-                }
-            }
-            "/receive" => {
-                match client.receive_messages(session.capability).await {
-                    Ok(messages) => {
-                        for msg in messages {
-                            self.app.add_message(msg.into());
-                        }
-                        self.app.set_status("Fetched recent messages".to_string(), false);
-                    }
-                    Err(e) => {
-                        self.app.set_status(format!("Failed to receive messages: {}", e), true);
+            "/whoami" => match client.whoami(session.capability).await {
+                Ok(result) => {
+                    if let Some(username) = result.get("username").and_then(|v| v.as_str()) {
+                        self.app.add_message(ChatMessage {
+                            from: "System".to_string(),
+                            body: format!("You are {}", username),
+                            timestamp: SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis() as u64,
+                        });
+                        self.app
+                            .set_status(format!("Authenticated as {}", username), false);
                     }
                 }
-            }
+                Err(e) => {
+                    self.app.set_status(format!("Whoami failed: {}", e), true);
+                }
+            },
+            "/receive" => match client.receive_messages(session.capability).await {
+                Ok(messages) => {
+                    for msg in messages {
+                        self.app.add_message(msg.into());
+                    }
+                    self.app
+                        .set_status("Fetched recent messages".to_string(), false);
+                }
+                Err(e) => {
+                    self.app
+                        .set_status(format!("Failed to receive messages: {}", e), true);
+                }
+            },
             _ => {
                 self.app.add_message(ChatMessage {
                     from: "System".to_string(),
-                    body: format!("Unknown command `{}`. Type /help for a list of commands.", command),
-                    timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64,
+                    body: format!(
+                        "Unknown command `{}`. Type /help for a list of commands.",
+                        command
+                    ),
+                    timestamp: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64,
                 });
             }
         }

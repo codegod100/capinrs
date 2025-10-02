@@ -10,6 +10,7 @@ const DEFAULT_BACKEND: &str = "ws://localhost:8787";
 
 struct CliOptions {
     url: String,
+    user: Option<String>,
 }
 
 struct Session {
@@ -27,12 +28,13 @@ fn usage() {
         "Usage: cargo run --bin websocket-client -- [OPTIONS]\n\n\
          Options:\n\
              --url <URL>    Override the Cap'n Web endpoint\n\
+             --user <NICK>  Use a specific nickname instead of random generation\n\
              -h, --help     Show this message\n\n\
          Environment:\n\
              CAPINRS_SERVER_HOST   Override the default backend ({}).\n\n\
          After launch you'll be prompted for username/password, the server will
          hand back a dedicated chat capability, and you can chat interactively.
-         Commands: /help, /auth, /receive, /whoami, /quit.",
+         Commands: /help, /auth, /receive, /whoami, /nickserv, /quit.",
         DEFAULT_BACKEND
     );
 }
@@ -123,7 +125,10 @@ async fn handle_user_input(
     }
 
     if !trimmed.starts_with('/') {
-        client.send_message(session.capability, trimmed).await.map_err(|e| format!("Send message error: {}", e))?;
+        client
+            .send_message(session.capability, trimmed)
+            .await
+            .map_err(|e| format!("Send message error: {}", e))?;
         return Ok(LoopAction::Continue);
     }
 
@@ -143,22 +148,35 @@ async fn handle_user_input(
             let password = parts
                 .next()
                 .ok_or_else(|| "Usage: /auth <username> <password>".to_string())?;
-            let capability = client.authenticate(username, password).await.map_err(|e| format!("Authentication error: {}", e))?;
+            let capability = client
+                .authenticate(username, password)
+                .await
+                .map_err(|e| format!("Authentication error: {}", e))?;
             session.username = username.to_string();
             session.capability = capability;
             println!("Re-authenticated as {}", session.username);
             Ok(LoopAction::Continue)
         }
         "/receive" | "/poll" => {
-            let messages = client.receive_messages(session.capability).await.map_err(|e| format!("Receive messages error: {}", e))?;
+            let messages = client
+                .receive_messages(session.capability)
+                .await
+                .map_err(|e| format!("Receive messages error: {}", e))?;
             for msg in messages {
                 println!("{}: {}", msg.from, msg.body);
             }
             Ok(LoopAction::Continue)
         }
         "/whoami" => {
-            let username = client.whoami(session.capability).await.map_err(|e| format!("Whoami error: {}", e))?;
-            println!("You are {} with capability {}", username, session.capability.as_u64());
+            let username = client
+                .whoami(session.capability)
+                .await
+                .map_err(|e| format!("Whoami error: {}", e))?;
+            println!(
+                "You are {} with capability {}",
+                username,
+                session.capability.as_u64()
+            );
             Ok(LoopAction::Continue)
         }
         other => {
@@ -211,9 +229,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Set up message handler for real-time messages
     let client_clone = client.get_client();
-    client_clone.set_on_message(|message: ChatMessage| {
-        println!("{}: {}", message.from, message.body);
-    }).await;
+    client_clone
+        .set_on_message(|message: ChatMessage| {
+            println!("{}: {}", message.from, message.body);
+        })
+        .await;
 
     // Load initial messages
     if let Err(err) = client.receive_messages(session.capability).await {
