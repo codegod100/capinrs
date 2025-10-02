@@ -215,6 +215,37 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // If the user supplied a nickname and password, attempt automatic NickServ identify.
     if let (Some(nick), Some(nick_pwd)) = (&options.user, &options.password) {
+        match client.check_nickname(session.capability, nick).await {
+            Ok(true) => {}
+            Ok(false) => {
+                let message = format!("Nickname '{}' is not registered", nick);
+                let detail = format!("{} | {}", message, STATUS_HELP);
+                ui.set_status(format_status(&session.nickname, url.as_str(), detail), true);
+                ui.add_message(ChatMessage {
+                    from: "System".to_string(),
+                    body: format!("NickServ identify aborted: {}", message),
+                    timestamp: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64,
+                });
+                return Err(message.into());
+            }
+            Err(err) => {
+                let message = format!("Failed to verify nickname '{}': {}", nick, err);
+                let detail = format!("{} | {}", message, STATUS_HELP);
+                ui.set_status(format_status(&session.nickname, url.as_str(), detail), true);
+                ui.add_message(ChatMessage {
+                    from: "System".to_string(),
+                    body: format!("NickServ identify failed: {}", err),
+                    timestamp: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64,
+                });
+                return Err(message.into());
+            }
+        }
         ui.log(
             &client,
             session.capability,
@@ -826,32 +857,73 @@ You will be prompted for the nickname password."
                     }
                     let nick = parts[2];
 
-                    // Start password input mode
-                    ui.log(
-                        &client,
-                        session.capability,
-                        &format!("Starting password input for nickname '{}'", nick),
-                    )
-                    .await;
-                    let prompt_text = format!("Password for nickname '{}'", nick);
-                    ui.log(
-                        &client,
-                        session.capability,
-                        &format!("Setting prompt to: '{}'", prompt_text),
-                    )
-                    .await;
-                    ui.start_password_input(prompt_text, "identify".to_string());
-                    ui.add_message(ChatMessage {
-                        from: "System".to_string(),
-                        body: format!(
-                            "Please enter password for nickname '{}' in the input area below",
-                            nick
-                        ),
-                        timestamp: SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .as_millis() as u64,
-                    });
+                    match client.check_nickname(session.capability, nick).await {
+                        Ok(true) => {
+                            // Start password input mode
+                            ui.log(
+                                &client,
+                                session.capability,
+                                &format!("Starting password input for nickname '{}'", nick),
+                            )
+                            .await;
+                            let prompt_text = format!("Password for nickname '{}'", nick);
+                            ui.log(
+                                &client,
+                                session.capability,
+                                &format!("Setting prompt to: '{}'", prompt_text),
+                            )
+                            .await;
+                            ui.start_password_input(prompt_text, "identify".to_string());
+                            ui.add_message(ChatMessage {
+                                from: "System".to_string(),
+                                body: format!(
+                                    "Please enter password for nickname '{}' in the input area below",
+                                    nick
+                                ),
+                                timestamp: SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_millis() as u64,
+                            });
+                        }
+                        Ok(false) => {
+                            let message = format!(
+                                "Nickname '{}' is not registered. Use /nickserv register <nick>.",
+                                nick
+                            );
+                            let detail = format!("{} | {}", message, STATUS_HELP);
+                            ui.set_status(
+                                format_status(&session.nickname, server_url, detail),
+                                true,
+                            );
+                            ui.add_message(ChatMessage {
+                                from: "System".to_string(),
+                                body: message,
+                                timestamp: SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_millis() as u64,
+                            });
+                            return;
+                        }
+                        Err(err) => {
+                            let message = format!("Failed to verify nickname '{}': {}", nick, err);
+                            let detail = format!("{} | {}", message, STATUS_HELP);
+                            ui.set_status(
+                                format_status(&session.nickname, server_url, detail),
+                                true,
+                            );
+                            ui.add_message(ChatMessage {
+                                from: "System".to_string(),
+                                body: message,
+                                timestamp: SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_millis() as u64,
+                            });
+                            return;
+                        }
+                    }
                 }
                 "register" => {
                     if parts.len() < 3 {

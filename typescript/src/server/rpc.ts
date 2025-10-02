@@ -14,6 +14,13 @@ type SessionInfo = {
   displayName?: string;
 };
 
+type NickTokenInfo = {
+  username: string;
+  nickname?: string;
+  issuedAt: number;
+  lastUsed?: number;
+};
+
 interface ChatState {
   credentials: Record<string, string>;
   messages: Array<{ from: string; body: string; timestamp: number }>;
@@ -21,6 +28,7 @@ interface ChatState {
   sessionCaps: Record<string, SessionInfo>;
   registeredNicks: Record<string, string>;
   nickOwners: Record<string, string>;
+  nickTokens: Record<string, NickTokenInfo>;
 }
 
 const DEFAULT_CHAT_STATE: ChatState = {
@@ -34,6 +42,7 @@ const DEFAULT_CHAT_STATE: ChatState = {
   sessionCaps: {},
   registeredNicks: {},
   nickOwners: {},
+  nickTokens: {},
 };
 
 function cloneDefaultChatState(): ChatState {
@@ -44,6 +53,7 @@ function cloneDefaultChatState(): ChatState {
     sessionCaps: { ...DEFAULT_CHAT_STATE.sessionCaps },
     registeredNicks: { ...DEFAULT_CHAT_STATE.registeredNicks },
     nickOwners: { ...DEFAULT_CHAT_STATE.nickOwners },
+    nickTokens: { ...DEFAULT_CHAT_STATE.nickTokens },
   };
 }
 
@@ -124,6 +134,32 @@ function normalizeChatState(parsed: unknown): ChatState {
     }
   }
 
+  const nickTokens: Record<string, NickTokenInfo> = {};
+  if (source.nickTokens && typeof source.nickTokens === "object") {
+    for (const [key, value] of Object.entries(source.nickTokens as Record<string, unknown>)) {
+      if (value && typeof value === "object") {
+        const entry = value as Record<string, unknown>;
+        const username = typeof entry.username === "string" ? entry.username : null;
+        if (!username) {
+          continue;
+        }
+        const nickname = typeof entry.nickname === "string" ? entry.nickname : undefined;
+        const issuedAt = typeof entry.issuedAt === "number" && Number.isFinite(entry.issuedAt)
+          ? entry.issuedAt
+          : Date.now();
+        const lastUsed = typeof entry.lastUsed === "number" && Number.isFinite(entry.lastUsed)
+          ? entry.lastUsed
+          : undefined;
+        nickTokens[key] = {
+          username,
+          ...(nickname ? { nickname } : {}),
+          issuedAt,
+          ...(lastUsed !== undefined ? { lastUsed } : {}),
+        };
+      }
+    }
+  }
+
   return {
     credentials,
     messages,
@@ -131,6 +167,7 @@ function normalizeChatState(parsed: unknown): ChatState {
     sessionCaps,
     registeredNicks,
     nickOwners,
+    nickTokens,
   };
 }
 
@@ -323,6 +360,66 @@ async function tryHandleChatBatch(payload: string, state: DurableObjectStateWith
         };
         break;
       }
+      case "redeemNickToken": {
+        if (args.length !== 1 || typeof args[0] !== "string") {
+          payloadResult = { success: false, message: "`redeemNickToken` expects <token>" };
+          break;
+        }
+
+        const token = (args[0] as string).trim();
+        if (!token) {
+          payloadResult = {
+            success: true,
+            value: {
+              status: "error",
+              message: "Token must be provided",
+            },
+          };
+          break;
+        }
+
+        const tokenInfo = chatState.nickTokens[token];
+        if (!tokenInfo) {
+          payloadResult = {
+            success: true,
+            value: {
+              status: "error",
+              message: "Token not recognized",
+            },
+          };
+          break;
+        }
+
+        let sessionCapId = chatState.nextSessionCapId;
+        while (chatState.sessionCaps[String(sessionCapId)]) {
+          sessionCapId += 1;
+        }
+        chatState.nextSessionCapId = sessionCapId + 1;
+        chatState.sessionCaps[String(sessionCapId)] = {
+          username: tokenInfo.username,
+          displayName: tokenInfo.nickname ?? tokenInfo.username,
+        };
+
+        chatState.nickTokens[token] = {
+          ...tokenInfo,
+          lastUsed: Date.now(),
+        };
+        mutated = true;
+
+        payloadResult = {
+          success: true,
+          value: {
+            status: "ok",
+            session: {
+              _type: "capability",
+              id: sessionCapId,
+            },
+            user: tokenInfo.username,
+            nickname: tokenInfo.nickname ?? tokenInfo.username,
+          },
+        };
+        break;
+      }
       case "sendMessage":
       case "receiveMessages": {
         payloadResult = {
@@ -494,6 +591,50 @@ async function tryHandleChatBatch(payload: string, state: DurableObjectStateWith
             value: {
               status: "ok",
               registered: !!chatState.registeredNicks[nickname],
+            },
+          };
+          break;
+        }
+        case "storeNickToken": {
+          if (args.length !== 1 || typeof args[0] !== "string") {
+            payloadResult = { success: false, message: "`storeNickToken` expects <token>" };
+            break;
+          }
+
+          const token = (args[0] as string).trim();
+          if (!token) {
+            payloadResult = {
+              success: true,
+              value: {
+                status: "error",
+                message: "Token must be provided",
+              },
+            };
+            break;
+          }
+
+          const now = Date.now();
+          chatState.nickTokens[token] = {
+            username: sessionInfo.username,
+            ...(sessionInfo.displayName ? { nickname: sessionInfo.displayName } : {}),
+            issuedAt: now,
+            lastUsed: now,
+          };
+
+          const tokensForUser = Object.entries(chatState.nickTokens)
+            .filter(([, info]) => info.username === sessionInfo.username)
+            .sort(([, a], [, b]) => (b.issuedAt ?? 0) - (a.issuedAt ?? 0));
+
+          tokensForUser.slice(5).forEach(([tokenKey]) => {
+            delete chatState.nickTokens[tokenKey];
+          });
+
+          mutated = true;
+          payloadResult = {
+            success: true,
+            value: {
+              status: "ok",
+              message: 'Nickname token stored',
             },
           };
           break;

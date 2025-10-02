@@ -2,6 +2,7 @@ use capnweb_core::CapId;
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+        MouseEventKind,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -450,13 +451,25 @@ impl RatatuiClient {
 
     pub fn handle_event(&mut self) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if self.app.handle_input(key) {
-                    if self.app.should_quit {
-                        return Ok(true);
+            match event::read()? {
+                Event::Key(key) => {
+                    if self.app.handle_input(key) {
+                        if self.app.should_quit {
+                            return Ok(true);
+                        }
+                        return Ok(true); // Input ready
                     }
-                    return Ok(true); // Input ready
                 }
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollUp => {
+                        self.app.scroll_up();
+                    }
+                    MouseEventKind::ScrollDown => {
+                        self.app.scroll_down();
+                    }
+                    _ => {}
+                },
+                _ => {}
             }
         }
         Ok(false)

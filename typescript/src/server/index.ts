@@ -200,17 +200,7 @@ export class CapnWebDurable extends RpcTarget {
   // RPC methods that clients can call
   async auth(username: string, _password: string) {
     const chatState = await loadChatState(this.state);
-
-    // Allocate session capability
-    let sessionCapId = chatState.nextSessionCapId;
-    while (chatState.sessionCaps[String(sessionCapId)]) {
-      sessionCapId += 1;
-    }
-    chatState.nextSessionCapId = sessionCapId + 1;
-    chatState.sessionCaps[String(sessionCapId)] = {
-      username,
-      displayName: username,
-    };
+    const sessionCapId = this.allocateSession(chatState, username, username);
 
     await persistChatState(this.state, chatState);
 
@@ -430,6 +420,105 @@ export class CapnWebDurable extends RpcTarget {
     }
     return { status: 'ok' };
   }
+
+  async storeNickToken(capabilityId: number, token: string) {
+    if (typeof token !== 'string') {
+      throw new TypeError('`storeNickToken` expects <capabilityId>, <token>');
+    }
+
+    const normalizedToken = token.trim();
+    if (!normalizedToken) {
+      throw new Error('Token must be a non-empty string');
+    }
+
+    const chatState = await loadChatState(this.state);
+    const sessionInfo = chatState.sessionCaps[String(capabilityId)];
+    if (!sessionInfo) {
+      throw new Error('unknown session capability');
+    }
+
+    const now = Date.now();
+    chatState.nickTokens[normalizedToken] = {
+      username: sessionInfo.username,
+      ...(sessionInfo.displayName ? { nickname: sessionInfo.displayName } : {}),
+      issuedAt: now,
+      lastUsed: now,
+    };
+
+    // Keep only the most recent 5 tokens per username to avoid unbounded growth
+    const tokensForUser = Object.entries(chatState.nickTokens)
+      .filter(([, info]) => info.username === sessionInfo.username)
+      .sort(([, a], [, b]) => (b.issuedAt ?? 0) - (a.issuedAt ?? 0));
+
+    for (const [index, [tokenKey]] of tokensForUser.entries()) {
+      if (index >= 5) {
+        delete chatState.nickTokens[tokenKey];
+      }
+    }
+
+    await persistChatState(this.state, chatState);
+
+    return {
+      status: 'ok',
+      message: 'Nickname token stored',
+    };
+  }
+
+  async redeemNickToken(token: string) {
+    if (typeof token !== 'string') {
+      throw new TypeError('`redeemNickToken` expects <token>');
+    }
+
+    const normalizedToken = token.trim();
+    if (!normalizedToken) {
+      return {
+        status: 'error',
+        message: 'Token must be provided',
+      };
+    }
+
+    const chatState = await loadChatState(this.state);
+    const tokenInfo = chatState.nickTokens[normalizedToken];
+    if (!tokenInfo) {
+      return {
+        status: 'error',
+        message: 'Token not recognized',
+      };
+    }
+
+    const displayName = tokenInfo.nickname ?? tokenInfo.username;
+    const capabilityId = this.allocateSession(chatState, tokenInfo.username, displayName);
+
+    chatState.nickTokens[normalizedToken] = {
+      ...tokenInfo,
+      lastUsed: Date.now(),
+    };
+
+    await persistChatState(this.state, chatState);
+
+    return {
+      status: 'ok',
+      session: {
+        _type: 'capability',
+        id: capabilityId,
+      },
+      user: tokenInfo.username,
+      nickname: displayName,
+    };
+  }
+
+  private allocateSession(chatState: ChatState, username: string, displayName?: string) {
+    let sessionCapId = chatState.nextSessionCapId;
+    while (chatState.sessionCaps[String(sessionCapId)]) {
+      sessionCapId += 1;
+    }
+    chatState.nextSessionCapId = sessionCapId + 1;
+    chatState.sessionCaps[String(sessionCapId)] = {
+      username,
+      ...(displayName ? { displayName } : {}),
+    };
+    return sessionCapId;
+  }
 }
 
 async function handleRpc(request: Request, state: DurableObjectStateWithStorage): Promise<Response> {
@@ -511,6 +600,13 @@ type SessionInfo = {
   displayName?: string;
 };
 
+type NickTokenInfo = {
+  username: string;
+  nickname?: string;
+  issuedAt: number;
+  lastUsed?: number;
+};
+
 type ChatState = {
   credentials: Record<string, string>;
   messages: Array<{ from: string; body: string; timestamp: number }>;
@@ -518,6 +614,7 @@ type ChatState = {
   sessionCaps: Record<string, SessionInfo>;
   registeredNicks: Record<string, string>; // nickname -> password
   nickOwners: Record<string, string>; // nickname -> username
+  nickTokens: Record<string, NickTokenInfo>;
 };
 
 const DEFAULT_CHAT_STATE: ChatState = {
@@ -527,6 +624,7 @@ const DEFAULT_CHAT_STATE: ChatState = {
   sessionCaps: {},
   registeredNicks: {},
   nickOwners: {},
+  nickTokens: {},
 };
 
 function cloneDefaultChatState(): ChatState {
@@ -537,6 +635,7 @@ function cloneDefaultChatState(): ChatState {
     sessionCaps: { ...DEFAULT_CHAT_STATE.sessionCaps },
     registeredNicks: { ...DEFAULT_CHAT_STATE.registeredNicks },
     nickOwners: { ...DEFAULT_CHAT_STATE.nickOwners },
+    nickTokens: { ...DEFAULT_CHAT_STATE.nickTokens },
   };
 }
 
@@ -617,6 +716,32 @@ function normalizeChatState(parsed: unknown): ChatState {
     }
   }
 
+  const nickTokens: Record<string, NickTokenInfo> = {};
+  if (source.nickTokens && typeof source.nickTokens === "object") {
+    for (const [key, value] of Object.entries(source.nickTokens as Record<string, unknown>)) {
+      if (value && typeof value === "object") {
+        const entry = value as Record<string, unknown>;
+        const username = typeof entry.username === "string" ? entry.username : null;
+        if (!username) {
+          continue;
+        }
+        const nickname = typeof entry.nickname === "string" ? entry.nickname : undefined;
+        const issuedAt = typeof entry.issuedAt === "number" && Number.isFinite(entry.issuedAt)
+          ? entry.issuedAt
+          : Date.now();
+        const lastUsed = typeof entry.lastUsed === "number" && Number.isFinite(entry.lastUsed)
+          ? entry.lastUsed
+          : undefined;
+        nickTokens[key] = {
+          username,
+          ...(nickname ? { nickname } : {}),
+          issuedAt,
+          ...(lastUsed !== undefined ? { lastUsed } : {}),
+        };
+      }
+    }
+  }
+
   return {
     credentials,
     messages,
@@ -624,6 +749,7 @@ function normalizeChatState(parsed: unknown): ChatState {
     sessionCaps,
     registeredNicks,
     nickOwners,
+    nickTokens,
   };
 }
 
