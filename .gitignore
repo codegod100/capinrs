@@ -5,3 +5,4 @@ worker/wasm/
 wasm/target/
 wasm/pkg/
 typescript/dist/
+pages/dist/

@@ -4,7 +4,6 @@ import {
   KeyboardEvent,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -16,10 +15,9 @@ const DEFAULT_BACKEND = 'wss://capinrs-server.veronika-m-winters.workers.dev';
 const STATUS_HELP = 'Type /help for commands | Press Esc to cancel password input';
 const MAX_MESSAGES = 200;
 const MAX_HISTORY = 50;
-const INITIAL_VISIBLE_MESSAGES = 15;
-const VISIBLE_INCREMENT = 20;
 const TOKEN_STORAGE_KEY = 'capinrs:nickserv-token';
 const LAST_URL_STORAGE_KEY = 'capinrs:last-server-url';
+const DEFAULT_VISIBLE_LINES = 15;
 
 type Message = {
   from: string;
@@ -225,24 +223,18 @@ function App() {
   const [passwordPrompt, setPasswordPrompt] = useState<PasswordPromptState | null>(null);
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(0);
-  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_MESSAGES);
   const [savedTokenInfo, setSavedTokenInfo] = useState<StoredTokenRecord | null>(null);
   const [isRedeemingToken, setIsRedeemingToken] = useState(false);
   const [rememberedUrl, setRememberedUrl] = useState(() => readLastUrl() ?? DEFAULT_BACKEND);
+  const [visibleLines, setVisibleLines] = useState(DEFAULT_VISIBLE_LINES);
 
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const shouldAutoscrollRef = useRef(true);
-  const previousScrollHeightRef = useRef<number | null>(null);
-  const previousScrollTopRef = useRef(0);
 
   const messageCount = messages.length;
 
-  const displayMessages = useMemo(() => {
-    const startIndex = Math.max(messageCount - visibleCount, 0);
-    return messages.slice(startIndex);
-  }, [messages, visibleCount, messageCount]);
-  const displayStartIndex = Math.max(messageCount - displayMessages.length, 0);
+  const displayMessages = useMemo(() => messages, [messages]);
 
   const connecting = phase === 'connecting';
 
@@ -250,6 +242,20 @@ function App() {
     if (typeof window === 'undefined') {
       return;
     }
+
+    const handleResize = () => {
+      const height = window.innerHeight;
+      const header = 220;
+      const footer = 250;
+      const available = Math.max(height - header - footer, 140);
+      const lineHeight = 28;
+      const lines = Math.max(Math.floor(available / lineHeight), 6);
+      setVisibleLines(lines);
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+
     const storedToken = readStoredToken();
     if (storedToken) {
       setSavedTokenInfo(storedToken);
@@ -258,6 +264,10 @@ function App() {
     if (storedUrl) {
       setRememberedUrl(storedUrl);
     }
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
   }, []);
 
   useEffect(() => {
@@ -287,32 +297,7 @@ function App() {
     if (shouldAutoscrollRef.current && messagesRef.current) {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
     }
-  }, [displayMessages]);
-
-  useLayoutEffect(() => {
-    if (previousScrollHeightRef.current === null || !messagesRef.current) {
-      return;
-    }
-    const node = messagesRef.current;
-    const previousHeight = previousScrollHeightRef.current;
-    const previousTop = previousScrollTopRef.current;
-    const newHeight = node.scrollHeight;
-    node.scrollTop = newHeight - previousHeight + previousTop;
-    previousScrollHeightRef.current = null;
-  }, [displayMessages, visibleCount]);
-
-  useEffect(() => {
-    setVisibleCount((prev) => {
-      const clampedPrev = Math.min(
-        Math.max(prev, INITIAL_VISIBLE_MESSAGES),
-        messageCount,
-      );
-      if (shouldAutoscrollRef.current) {
-        return Math.min(messageCount, INITIAL_VISIBLE_MESSAGES);
-      }
-      return clampedPrev;
-    });
-  }, [messageCount]);
+  }, [messages]);
 
   const handleMessagesScroll = useCallback(() => {
     const node = messagesRef.current;
@@ -323,22 +308,7 @@ function App() {
     const { scrollTop, scrollHeight, clientHeight } = node;
     const atBottom = scrollHeight - (scrollTop + clientHeight) < 16;
     shouldAutoscrollRef.current = atBottom;
-
-    if (
-      scrollTop <= 24 &&
-      visibleCount < messageCount &&
-      previousScrollHeightRef.current === null
-    ) {
-      previousScrollHeightRef.current = scrollHeight;
-      previousScrollTopRef.current = scrollTop;
-      const nextCount = Math.min(messageCount, visibleCount + VISIBLE_INCREMENT);
-      if (nextCount !== visibleCount) {
-        setVisibleCount(nextCount);
-      } else {
-        previousScrollHeightRef.current = null;
-      }
-    }
-  }, [messageCount, visibleCount]);
+  }, []);
 
   const safeLog = useCallback(
     async (text: string) => {
@@ -532,7 +502,6 @@ function App() {
       setHistoryIndex(0);
       setPasswordPrompt(null);
       setPasswordValue('');
-      setVisibleCount(INITIAL_VISIBLE_MESSAGES);
       setStatus('Connecting…');
       setIsStatusError(false);
 
@@ -700,7 +669,6 @@ function App() {
       setHistoryIndex(0);
       setPasswordPrompt(null);
       setPasswordValue('');
-      setVisibleCount(INITIAL_VISIBLE_MESSAGES);
       setStatus('Redeeming token…');
       setIsStatusError(false);
 
@@ -849,9 +817,8 @@ function App() {
     setMessages([]);
     setHistory([]);
     setHistoryIndex(0);
-    setPasswordPrompt(null);
-    setPasswordValue('');
-    setVisibleCount(INITIAL_VISIBLE_MESSAGES);
+   setPasswordPrompt(null);
+   setPasswordValue('');
     setPhase('login');
     setStatus('');
     setIsStatusError(false);
@@ -1266,44 +1233,41 @@ You will be prompted for a password to protect your nickname.`),
 
       {phase === 'chat' && session && (
         <div className="chat-layout">
-          {chatHeader}
-
-          <div className="chat-layout__messages" ref={messagesRef} onScroll={handleMessagesScroll}>
-            {messageCount === 0 ? (
-              <div className="chat-layout__empty">No messages yet.</div>
-            ) : (
-              <>
-                {displayStartIndex > 0 && (
-                  <div className="chat-layout__scrollback-hint">
-                    Scroll up to load earlier messages…
-                  </div>
-                )}
-                {displayMessages.map((message, index) => {
-                  const key = displayStartIndex + index;
-                  const lines = message.body.split('\n');
-                  return (
-                    <div key={key} className="message">
-                      <span className="message__time">{formatTimestamp(message.timestamp)}</span>
-                      <span className="message__from">{message.from}:</span>
-                      <span className="message__body">
-                        {lines.map((line, lineIndex) => (
-                          <span key={lineIndex} className="message__line">
-                            {line}
-                            {lineIndex < lines.length - 1 && <br />}
-                          </span>
-                        ))}
-                      </span>
-                    </div>
-                  );
-                })}
-              </>
-            )}
-          </div>
-
-          <div className="chat-layout__actions">
+          <div className="chat-layout__header-row">
+            {chatHeader}
             <button className="chat-layout__logout" type="button" onClick={handleLogout}>
               Log out
             </button>
+          </div>
+
+          <div
+            className="chat-layout__messages"
+            ref={messagesRef}
+            onScroll={handleMessagesScroll}
+            style={{ maxHeight: `calc(${visibleLines} * 1.6rem + 2.5rem)` }}
+          >
+            {messageCount === 0 ? (
+              <div className="chat-layout__empty">No messages yet.</div>
+            ) : (
+              displayMessages.map((message, index) => {
+                const key = `${message.timestamp}-${index}`;
+                const lines = message.body.split('\n');
+                return (
+                  <div key={key} className="message">
+                    <span className="message__time">{formatTimestamp(message.timestamp)}</span>
+                    <span className="message__from">{message.from}:</span>
+                    <span className="message__body">
+                      {lines.map((line, lineIndex) => (
+                        <span key={lineIndex} className="message__line">
+                          {line}
+                          {lineIndex < lines.length - 1 && <br />}
+                        </span>
+                      ))}
+                    </span>
+                  </div>
+                );
+              })
+            )}
           </div>
 
           <form className="chat-layout__input-form" onSubmit={handleInputSubmit}>

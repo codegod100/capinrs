@@ -209,12 +209,18 @@ textarea {
   gap: 1.5rem;
 }
 
+
+.chat-layout__header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
 .chat-layout__header {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 0.75rem 1.5rem;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
 .chat-layout__title {
@@ -242,7 +248,7 @@ textarea {
 }
 
 .chat-layout__messages {
-  flex: 1;
+  flex: 0 0 auto;
   overflow-y: auto;
   background: rgba(10, 14, 28, 0.75);
   border: 1px solid rgba(59, 130, 246, 0.2);
@@ -254,11 +260,6 @@ textarea {
   box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.35);
 }
 
-.chat-layout__actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
 .chat-layout__logout {
   padding: 0.55rem 1.1rem;
   border-radius: 0.75rem;
@@ -268,6 +269,7 @@ textarea {
   font-weight: 600;
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  margin-top: 0.35rem;
 }
 
 .chat-layout__logout:hover {
@@ -277,17 +279,6 @@ textarea {
 
 .chat-layout__logout:active {
   transform: translateY(0);
-}
-
-.chat-layout__scrollback-hint {
-  align-self: center;
-  padding: 0.35rem 0.75rem;
-  border-radius: 9999px;
-  background: rgba(96, 165, 250, 0.12);
-  color: rgba(191, 219, 254, 0.9);
-  font-size: 0.8rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .chat-layout__empty {
