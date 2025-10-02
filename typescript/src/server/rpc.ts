@@ -293,17 +293,12 @@ async function tryHandleChatBatch(payload: string, state: DurableObjectStateWith
   if (capabilityId === CHAT_CAPABILITY_ID) {
     switch (method) {
       case "auth": {
-        if (args.length !== 2 || typeof args[0] !== "string" || typeof args[1] !== "string") {
-          payloadResult = { success: false, message: "`auth` expects <username>, <password>" };
+        if (args.length < 1 || typeof args[0] !== "string") {
+          payloadResult = { success: false, message: "`auth` expects <username>" };
           break;
         }
 
-        const [username, password] = args as [string, string];
-        const stored = chatState.credentials[username];
-        if (!stored || stored !== password) {
-          payloadResult = { success: false, message: "invalid credentials" };
-          break;
-        }
+        const username = args[0] as string;
 
         let sessionCapId = chatState.nextSessionCapId;
         while (chatState.sessionCaps[String(sessionCapId)]) {

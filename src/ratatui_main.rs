@@ -21,7 +21,6 @@ Options:
 
 Environment:
   CAPINRS_SERVER_HOST   Override the default backend (wss://capinrs-server.veronika-m-winters.workers.dev)
-  CAPINRS_PASSWORD      Backend authentication password (defaults to 'default_password')
 
 After launch you'll connect with your nickname and can start chatting!
 Commands: /help, /whoami, /receive, /nickserv, /quit",
@@ -86,15 +85,6 @@ struct CliOptions {
     password: Option<String>,
 }
 
-fn prompt(message: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
-    use std::io::{self, Write};
-    print!("{}", message);
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_string())
-}
-
 fn generate_random_nickname() -> String {
     let adjectives = [
         "Happy", "Clever", "Swift", "Bright", "Calm", "Bold", "Wise", "Kind", "Cool", "Sharp",
@@ -134,15 +124,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .clone()
         .unwrap_or_else(generate_random_nickname);
 
-    // Determine backend authentication password (distinct from nickname password)
-    let auth_password =
-        std::env::var("CAPINRS_PASSWORD").unwrap_or_else(|_| "default_password".to_string());
-
     let client = WebSocketClient::new(&url)
         .await
         .map_err(|e| format!("Failed to connect to WebSocket: {}", e))?;
 
-    let capability = match client.authenticate(&username, &auth_password).await {
+    let capability = match client.authenticate(&username, "").await {
         Ok(cap) => cap,
         Err(err) => {
             eprintln!("Authentication failed: {}", err);
@@ -214,6 +200,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             .await
         {
             Ok(message) => {
+                let old_nickname = session.nickname.clone();
+                session.nickname = nick.to_string();
                 ui.set_status(
                     format!(
                         "Connected as {} | {} | Type /help for commands | Press Ctrl+C to quit",
@@ -229,6 +217,15 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         .unwrap()
                         .as_millis() as u64,
                 });
+                ui.log(
+                    &client,
+                    session.capability,
+                    &format!(
+                        "Auto NickServ identify succeeded; nickname changed from '{}' to '{}'",
+                        old_nickname, session.nickname
+                    ),
+                )
+                .await;
             }
             Err(err) => {
                 ui.set_status(

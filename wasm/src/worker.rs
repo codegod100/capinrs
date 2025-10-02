@@ -41,9 +41,8 @@ impl ChatState {
         state
     }
 
-    fn validate_credentials(&self, username: &str, password: &str) -> bool {
-        // Accept any username with default password
-        password == "default_password"
+    fn validate_credentials(&self, _username: &str, _password: &str) -> bool {
+        true
     }
 
     fn allocate_session_capability(&mut self, username: &str) -> u64 {

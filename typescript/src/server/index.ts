@@ -198,13 +198,8 @@ export class CapnWebDurable extends RpcTarget {
   }
 
   // RPC methods that clients can call
-  async auth(username: string, password: string) {
+  async auth(username: string, _password: string) {
     const chatState = await loadChatState(this.state);
-
-    // Accept any username with default password
-    if (password !== 'default_password') {
-      throw new Error('invalid credentials');
-    }
 
     // Allocate session capability
     let sessionCapId = chatState.nextSessionCapId;
