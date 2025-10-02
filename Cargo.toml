@@ -2,11 +2,9 @@
 name = "capinrs"
 version = "0.1.0"
 edition = "2024"
-default-run = "server"
+default-run = "ratatui-client"
 
 [dependencies]
-capnweb-server = "0.1.0"
-capnweb-client = "0.1.0"
 capnweb-core = "0.1.0"
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "full"] }
@@ -15,38 +13,8 @@ futures-util = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 ratatui = "0.25"
 crossterm = "0.27"
-warp = "0.3"
-uuid = { version = "1.0", features = ["v4"] }
 rand = "0.8"
-
-[[bin]]
-name = "server"
-path = "src/main.rs"
-
-[[bin]]
-name = "client"
-path = "src/client.rs"
-
-[[bin]]
-name = "websocket-client"
-path = "src/websocket_client_main.rs"
-
-[[bin]]
-name = "ui-client"
-path = "src/ui_client_main.rs"
-
-[[bin]]
-name = "simple-ui-client"
-path = "src/simple_ui_main.rs"
 
 [[bin]]
 name = "ratatui-client"
 path = "src/ratatui_main.rs"
-
-[[bin]]
-name = "websocket-server"
-path = "src/websocket_server_main.rs"
-
-[[bin]]
-name = "test-websocket"
-path = "src/test_websocket.rs"
