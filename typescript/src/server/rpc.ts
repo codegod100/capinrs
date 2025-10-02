@@ -342,9 +342,9 @@ async function tryHandleChatBatch(payload: string, state: DurableObjectStateWith
           sessionCapId += 1;
         }
         chatState.nextSessionCapId = sessionCapId + 1;
+        const storedUsername = `guest-${sessionCapId}`;
         chatState.sessionCaps[String(sessionCapId)] = {
-          username,
-          displayName: username,
+          username: storedUsername,
         };
         mutated = true;
 
@@ -355,7 +355,7 @@ async function tryHandleChatBatch(payload: string, state: DurableObjectStateWith
               _type: "capability",
               id: sessionCapId,
             },
-            user: username,
+            user: storedUsername,
           },
         };
         break;

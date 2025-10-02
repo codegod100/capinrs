@@ -200,7 +200,17 @@ export class CapnWebDurable extends RpcTarget {
   // RPC methods that clients can call
   async auth(username: string, _password: string) {
     const chatState = await loadChatState(this.state);
-    const sessionCapId = this.allocateSession(chatState, username, username);
+
+    let sessionCapId = chatState.nextSessionCapId;
+    while (chatState.sessionCaps[String(sessionCapId)]) {
+      sessionCapId += 1;
+    }
+    chatState.nextSessionCapId = sessionCapId + 1;
+
+    const storedUsername = `guest-${sessionCapId}`;
+    chatState.sessionCaps[String(sessionCapId)] = {
+      username: storedUsername,
+    };
 
     await persistChatState(this.state, chatState);
 
@@ -209,7 +219,7 @@ export class CapnWebDurable extends RpcTarget {
         _type: 'capability',
         id: sessionCapId,
       },
-      user: username,
+      user: storedUsername,
     };
   }
 
@@ -507,7 +517,11 @@ export class CapnWebDurable extends RpcTarget {
     };
   }
 
-  private allocateSession(chatState: ChatState, username: string, displayName?: string) {
+  private allocateSession(
+    chatState: ChatState,
+    username: string,
+    displayName?: string,
+  ) {
     let sessionCapId = chatState.nextSessionCapId;
     while (chatState.sessionCaps[String(sessionCapId)]) {
       sessionCapId += 1;

@@ -521,44 +521,36 @@ function App() {
             ? authResult.user
             : chosenNickname;
 
-        const nextSession: Session = {
+        const baseSession: Session = {
           capabilityId,
           username: chosenNickname,
           nickname: resolvedNickname,
           serverUrl: normalizedUrl,
         };
 
-        setHandles({ remoteMain, client });
-        setSession(nextSession);
-        writeLastUrl(normalizedUrl);
-        setRememberedUrl(normalizedUrl);
-
-        await safeLog('Client connected successfully via Pages UI');
-
         const messagesResult = await remoteMain.receiveMessages(capabilityId);
         const rawMessages: any[] = Array.isArray(messagesResult?.messages)
           ? messagesResult.messages
           : [];
-        const normalizedMessages = rawMessages.map(normalizeMessage);
-        const limited = limitMessages(normalizedMessages);
+        let nextMessages = limitMessages(rawMessages.map(normalizeMessage));
 
-        setMessages(() =>
-          limitMessages([
-            ...limited,
-            createSystemMessage(`Welcome, ${resolvedNickname}! Type /help for available commands.`),
-          ]),
-        );
+        const appendSystemMessage = (body: string) => {
+          nextMessages = limitMessages([
+            ...nextMessages,
+            createSystemMessage(body),
+          ]);
+        };
 
-        setStatus(
-          formatStatus(
-            resolvedNickname,
-            normalizedUrl,
-            `Loaded ${Math.min(limited.length, MAX_MESSAGES)} recent messages (of ${rawMessages.length} total) | ${STATUS_HELP}`,
-          ),
+        appendSystemMessage(`Welcome, ${resolvedNickname}! Type /help for available commands.`);
+
+        let workingNickname = resolvedNickname;
+        let statusText = formatStatus(
+          resolvedNickname,
+          normalizedUrl,
+          `Loaded ${Math.min(nextMessages.length, MAX_MESSAGES)} recent messages (of ${rawMessages.length} total) | ${STATUS_HELP}`,
         );
-        setIsStatusError(false);
-        shouldAutoscrollRef.current = true;
-        setPhase('chat');
+        let statusError = false;
+        let shouldEnterChat = true;
 
         if (nickname && nicknamePassword) {
           try {
@@ -566,83 +558,79 @@ function App() {
             const registered = Boolean(checkResult?.registered);
             if (!registered) {
               const message = `Nickname '${nickname}' is not registered. Use /nickserv register <nick>.`;
-              setStatus(formatStatus(resolvedNickname, normalizedUrl, `${message} | ${STATUS_HELP}`));
-              setIsStatusError(true);
-              setMessages((prev) =>
-                limitMessages([
-                  ...prev,
-                  createSystemMessage(`NickServ identify aborted: ${message}`),
-                ]),
-              );
+              appendSystemMessage(`NickServ identify aborted: ${message}`);
+              statusText = formatStatus(resolvedNickname, normalizedUrl, `${message} | ${STATUS_HELP}`);
+              statusError = true;
+              shouldEnterChat = false;
+              setConnectError(message);
             } else {
-              try {
-                const identifyResult = await remoteMain.identifyNick(
-                  capabilityId,
-                  nickname,
-                  nicknamePassword,
-                );
-                const statusValue = typeof identifyResult?.status === 'string' ? identifyResult.status : '';
-                const messageValue =
-                  typeof identifyResult?.message === 'string'
-                    ? identifyResult.message
-                    : `Successfully identified as '${nickname}'`;
+              const identifyResult = await remoteMain.identifyNick(
+                capabilityId,
+                nickname,
+                nicknamePassword,
+              );
+              const statusValue = typeof identifyResult?.status === 'string' ? identifyResult.status : '';
+              const messageValue =
+                typeof identifyResult?.message === 'string'
+                  ? identifyResult.message
+                  : `Successfully identified as '${nickname}'`;
 
-                if (statusValue === 'ok') {
-                  setSession((prev) => ({ ...(prev ?? nextSession), nickname }));
-                  setStatus(
-                    formatStatus(
-                      nickname,
-                      normalizedUrl,
-                      `${messageValue} | ${STATUS_HELP}`,
-                    ),
-                  );
-                  setIsStatusError(false);
-                  setMessages((prev) =>
-                    limitMessages([
-                      ...prev,
-                      createSystemMessage(messageValue),
-                    ]),
-                  );
-
-                  await createNickToken({
-                    remoteMain,
-                    capabilityId,
-                    nickname,
-                    username: nextSession.username,
-                    serverUrl: normalizedUrl,
-                  });
-                } else {
-                  throw new Error(messageValue);
-                }
-              } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
-                setStatus(
-                  formatStatus(
-                    resolvedNickname,
-                    normalizedUrl,
-                    `NickServ identify failed: ${message}`,
-                  ),
-                );
-                setIsStatusError(true);
-                setMessages((prev) =>
-                  limitMessages([
-                    ...prev,
-                    createSystemMessage(`NickServ identify failed: ${message}`),
-                  ]),
-                );
+              if (statusValue === 'ok') {
+                workingNickname = nickname;
+                statusText = formatStatus(nickname, normalizedUrl, `${messageValue} | ${STATUS_HELP}`);
+                appendSystemMessage(messageValue);
+              } else {
+                throw new Error(messageValue);
               }
             }
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            setStatus(formatStatus(resolvedNickname, normalizedUrl, `Failed to verify nickname '${nickname}': ${message}`));
-            setIsStatusError(true);
-            setMessages((prev) =>
-              limitMessages([
-                ...prev,
-                createSystemMessage(`Failed to verify nickname '${nickname}': ${message}`),
-              ]),
+            appendSystemMessage(`NickServ identify failed: ${message}`);
+            statusText = formatStatus(
+              resolvedNickname,
+              normalizedUrl,
+              `NickServ identify failed: ${message}`,
             );
+            statusError = true;
+            shouldEnterChat = false;
+            setConnectError(`NickServ identify failed: ${message}`);
           }
+        }
+
+        if (!shouldEnterChat) {
+          setMessages(nextMessages);
+          setStatus(statusText);
+          setIsStatusError(true);
+          setPhase('login');
+          return;
+        }
+
+        const finalSession: Session = {
+          ...baseSession,
+          nickname: workingNickname,
+        };
+
+        setHandles({ remoteMain, client });
+        setSession(finalSession);
+        setMessages(nextMessages);
+        setStatus(statusText);
+        setIsStatusError(statusError);
+        writeLastUrl(normalizedUrl);
+        setRememberedUrl(normalizedUrl);
+
+        await safeLog('Client connected successfully via Pages UI');
+
+        shouldAutoscrollRef.current = true;
+        setPhase('chat');
+
+        if (nickname && nicknamePassword) {
+          await createNickToken({
+            remoteMain,
+            capabilityId,
+            nickname: workingNickname,
+            username: finalSession.username,
+            serverUrl: normalizedUrl,
+          });
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
